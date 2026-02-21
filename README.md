@@ -23,6 +23,34 @@ Hey! I created this MCP server because I didn't want to rely solely on messaging
 
 Think of it as an AI assistant orchestrating another AI assistant. Pretty cool, right?
 
+## Installation
+
+```bash
+npm install -g openclaw-mcp
+```
+
+## Usage
+
+### Configuration
+
+Set your OpenClaw gateway URL and token:
+
+```bash
+export OPENCLAW_URL=http://127.0.0.1:18789
+export OPENCLAW_GATEWAY_TOKEN=your-gateway-token
+```
+
+### Start the MCP Server
+
+```bash
+# For Claude Desktop (stdio transport)
+openclaw-mcp
+
+# For Claude.ai (SSE transport with auth)
+AUTH_ENABLED=true MCP_CLIENT_ID=openclaw MCP_CLIENT_SECRET=your-secret \
+  openclaw-mcp --transport sse --port 3000
+```
+
 ## Quick Start
 
 ### Docker (Recommended)
