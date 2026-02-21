@@ -23,6 +23,76 @@ Hey! I created this MCP server because I didn't want to rely solely on messaging
 
 Think of it as an AI assistant orchestrating another AI assistant. Pretty cool, right?
 
+## Installation
+
+### npm Package
+
+```bash
+npm install -g openclaw-mcp
+```
+
+Or run directly without installation:
+
+```bash
+npx openclaw-mcp
+```
+
+### Docker
+
+```bash
+docker pull ghcr.io/freema/openclaw-mcp:latest
+```
+
+## Usage
+
+### Claude Desktop Integration
+
+1. Install the package:
+   ```bash
+   npm install -g openclaw-mcp
+   ```
+
+2. Add to your Claude Desktop config file (`~/.config/claude/claude_desktop_config.json`):
+   ```json
+   {
+     "mcpServers": {
+       "openclaw": {
+         "command": "openclaw-mcp",
+         "env": {
+           "OPENCLAW_URL": "http://127.0.0.1:18789",
+           "OPENCLAW_GATEWAY_TOKEN": "your-gateway-token"
+         }
+       }
+     }
+   }
+   ```
+
+3. Restart Claude Desktop
+
+### Claude.ai Integration (Remote)
+
+1. Start the server with authentication:
+   ```bash
+   AUTH_ENABLED=true \
+   MCP_CLIENT_ID=openclaw \
+   MCP_CLIENT_SECRET=$(openssl rand -hex 32) \
+   MCP_ISSUER_URL=https://your-domain.com \
+   CORS_ORIGINS=https://claude.ai \
+   openclaw-mcp --transport sse --port 3000
+   ```
+
+2. Add the custom MCP connector in Claude.ai with your client credentials
+
+### Docker Deployment
+
+Create a `docker-compose.yml` and run:
+
+```bash
+export MCP_CLIENT_SECRET=$(openssl rand -hex 32)
+export OPENCLAW_GATEWAY_TOKEN=your-gateway-token
+docker compose up -d
+```
+
 ## Quick Start
 
 ### Docker (Recommended)
