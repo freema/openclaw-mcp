@@ -1,5 +1,10 @@
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const pkg = require('../../package.json') as { version: string };
+
 export const SERVER_NAME = 'openclaw-mcp';
-export const SERVER_VERSION = '1.0.0';
+export const SERVER_VERSION = pkg.version;
 export const DEFAULT_OPENCLAW_URL = 'http://127.0.0.1:18789';
 
 // Server icon: red claw on dark background — Base64 encoded SVG
