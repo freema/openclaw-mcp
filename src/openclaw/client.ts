@@ -5,7 +5,7 @@ import type {
   OpenAIChatCompletionResponse,
 } from './types.js';
 
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 
 export class OpenClawClient {

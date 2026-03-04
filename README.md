@@ -86,7 +86,8 @@ Add to your Claude Desktop config:
       "args": ["openclaw-mcp"],
       "env": {
         "OPENCLAW_URL": "http://127.0.0.1:18789",
-        "OPENCLAW_GATEWAY_TOKEN": "your-gateway-token"
+        "OPENCLAW_GATEWAY_TOKEN": "your-gateway-token",
+        "OPENCLAW_TIMEOUT_MS": "300000"
       }
     }
   }

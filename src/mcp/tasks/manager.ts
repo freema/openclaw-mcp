@@ -15,7 +15,7 @@ export type TaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cance
 
 export interface Task {
   id: string;
-  type: 'chat' | 'custom';
+  type: 'chat';
   status: TaskStatus;
   input: unknown;
   result?: string;
@@ -28,7 +28,7 @@ export interface Task {
 }
 
 export interface TaskCreateOptions {
-  type: 'chat' | 'custom';
+  type: 'chat';
   input: unknown;
   sessionId?: string;
   priority?: number;

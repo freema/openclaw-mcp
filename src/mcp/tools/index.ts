@@ -12,5 +12,4 @@ export {
   handleOpenclawTaskList,
   handleOpenclawTaskCancel,
   startTaskProcessor,
-  stopTaskProcessor,
 } from './tasks.js';

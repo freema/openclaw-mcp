@@ -11,7 +11,7 @@ import { createSSEServer, type SSEServerConfig } from './server/sse.js';
 const args = parseArguments(SERVER_VERSION);
 
 // Create OpenClaw client
-const client = new OpenClawClient(args.openclawUrl, args.gatewayToken);
+const client = new OpenClawClient(args.openclawUrl, args.gatewayToken, args.timeout);
 
 // Shared dependencies for tool registration
 const deps: ToolRegistrationDeps = {
@@ -25,6 +25,7 @@ async function main() {
   log(`OpenClaw URL: ${args.openclawUrl}`);
   log(`Transport: ${args.transport}`);
   log(`Gateway token: ${args.gatewayToken ? 'configured' : 'not set'}`);
+  log(`Request timeout: ${args.timeout}ms`);
 
   if (args.transport === 'sse') {
     const sseConfig: SSEServerConfig = {

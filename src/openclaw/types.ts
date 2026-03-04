@@ -1,10 +1,5 @@
 // OpenAI-compatible API types
 
-export interface OpenAIChatMessage {
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-}
-
 export interface OpenAIChatCompletionResponse {
   id: string;
   object: string;

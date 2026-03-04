@@ -100,13 +100,9 @@ async function processTask(task: Task, client: OpenClawClient): Promise<void> {
   taskManager.updateStatus(task.id, 'running');
 
   try {
-    if (task.type === 'chat') {
-      const input = task.input as { message: string; session_id?: string };
-      const response = await client.chat(input.message, input.session_id);
-      taskManager.updateStatus(task.id, 'completed', response.response);
-    } else {
-      taskManager.updateStatus(task.id, 'failed', undefined, 'Unknown task type');
-    }
+    const input = task.input as { message: string; session_id?: string };
+    const response = await client.chat(input.message, input.session_id);
+    taskManager.updateStatus(task.id, 'completed', response.response);
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
     taskManager.updateStatus(task.id, 'failed', undefined, errorMsg);
@@ -137,12 +133,6 @@ export function startTaskProcessor(client: OpenClawClient): void {
     processorRunning = false;
   });
   log('Task processor started');
-}
-
-export function stopTaskProcessor(): void {
-  processorRunning = false;
-  processorClient = null;
-  log('Task processor stopped');
 }
 
 // ============================================================================
@@ -245,7 +235,13 @@ export async function handleOpenclawTaskStatus(
   return successResponse(JSON.stringify(response, null, 2));
 }
 
-const VALID_TASK_STATUSES = ['pending', 'running', 'completed', 'failed', 'cancelled'] as const;
+const VALID_TASK_STATUSES: readonly TaskStatus[] = [
+  'pending',
+  'running',
+  'completed',
+  'failed',
+  'cancelled',
+];
 
 export async function handleOpenclawTaskList(
   _client: OpenClawClient,

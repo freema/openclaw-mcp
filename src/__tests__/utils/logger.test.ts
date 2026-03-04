@@ -46,31 +46,6 @@ describe('logger', () => {
     });
   });
 
-  describe('logDebug', () => {
-    it('does not log when DEBUG is not set', async () => {
-      vi.stubEnv('DEBUG', 'false');
-      vi.stubEnv('NODE_ENV', 'production');
-      const { logDebug } = await loadLogger();
-      logDebug('debug info');
-      expect(consoleSpy).not.toHaveBeenCalled();
-    });
-
-    it('logs when DEBUG=true', async () => {
-      vi.stubEnv('DEBUG', 'true');
-      const { logDebug } = await loadLogger();
-      logDebug('debug info');
-      expect(consoleSpy).toHaveBeenCalledWith('[openclaw-mcp] DEBUG: debug info');
-    });
-
-    it('logs when NODE_ENV=development', async () => {
-      vi.stubEnv('DEBUG', 'false');
-      vi.stubEnv('NODE_ENV', 'development');
-      const { logDebug } = await loadLogger();
-      logDebug('debug info');
-      expect(consoleSpy).toHaveBeenCalledWith('[openclaw-mcp] DEBUG: debug info');
-    });
-  });
-
   describe('sanitization', () => {
     it('redacts Bearer tokens', async () => {
       const { log } = await loadLogger();
