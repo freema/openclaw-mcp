@@ -128,14 +128,26 @@ export class OpenClawClient {
   /**
    * Send a chat message via the OpenAI-compatible /v1/chat/completions endpoint.
    */
-  async chat(message: string, _sessionId?: string): Promise<OpenClawChatResponse> {
+  async chat(message: string, sessionId?: string): Promise<OpenClawChatResponse> {
+    const body: Record<string, unknown> = {
+      model: 'claude-opus-4-5',
+      messages: [{ role: 'user', content: message }],
+      max_tokens: 4096,
+    };
+
+    if (sessionId) {
+      body.session_id = sessionId;
+    }
+
+    const headers: Record<string, string> = {};
+    if (sessionId) {
+      headers['x-openclaw-session-key'] = sessionId;
+    }
+
     const completion = await this.request<OpenAIChatCompletionResponse>('/v1/chat/completions', {
       method: 'POST',
-      body: JSON.stringify({
-        model: 'claude-opus-4-5',
-        messages: [{ role: 'user', content: message }],
-        max_tokens: 4096,
-      }),
+      body: JSON.stringify(body),
+      headers,
     });
 
     const content = completion.choices?.[0]?.message?.content ?? '';
