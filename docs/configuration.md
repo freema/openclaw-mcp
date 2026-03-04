@@ -10,6 +10,7 @@ All configuration can be done via environment variables. Copy `.env.example` to 
 |----------|-------------|---------|
 | `OPENCLAW_URL` | OpenClaw gateway URL | `http://127.0.0.1:18789` |
 | `OPENCLAW_GATEWAY_TOKEN` | Bearer token for gateway authentication | (none) |
+| `OPENCLAW_TIMEOUT_MS` | Request timeout in milliseconds | `120000` (2 min) |
 
 ### Server Settings (SSE transport)
 

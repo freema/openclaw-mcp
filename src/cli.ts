@@ -8,6 +8,7 @@ export interface CliArgs {
   transport: 'stdio' | 'sse';
   port: number;
   host: string;
+  timeout: number;
   authEnabled: boolean;
   clientId: string | undefined;
   clientSecret: string | undefined;
@@ -47,6 +48,11 @@ export function parseArguments(version: string): CliArgs {
       description: 'Host for SSE server',
       default: process.env.HOST || '0.0.0.0',
     })
+    .option('timeout', {
+      type: 'number',
+      description: 'Request timeout in milliseconds',
+      default: parseInt(process.env.OPENCLAW_TIMEOUT_MS || '120000', 10),
+    })
     .option('auth', {
       type: 'boolean',
       description: 'Enable OAuth authentication (SSE mode)',
@@ -81,6 +87,7 @@ export function parseArguments(version: string): CliArgs {
     transport: argv.transport as 'stdio' | 'sse',
     port: argv.port,
     host: argv.host,
+    timeout: argv.timeout,
     authEnabled: argv.auth,
     clientId: argv['client-id'] as string | undefined,
     clientSecret: argv['client-secret'] as string | undefined,

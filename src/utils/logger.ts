@@ -1,5 +1,3 @@
-const DEBUG = process.env.DEBUG === 'true' || process.env.NODE_ENV === 'development';
-
 /**
  * Patterns that may indicate sensitive data in log messages.
  * These are redacted to prevent credential leaks in logs.
@@ -33,11 +31,5 @@ export function logError(message: string, error?: unknown): void {
     } else {
       console.error('[openclaw-mcp] (non-Error object thrown)');
     }
-  }
-}
-
-export function logDebug(message: string): void {
-  if (DEBUG) {
-    console.error(`[openclaw-mcp] DEBUG: ${sanitizeLogMessage(message)}`);
   }
 }

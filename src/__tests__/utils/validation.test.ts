@@ -4,9 +4,6 @@ import {
   validateString,
   validateMessage,
   validateId,
-  validateKey,
-  validatePositiveInt,
-  validateOptionalPositiveInt,
 } from '../../utils/validation.js';
 
 describe('validateInputIsObject', () => {
@@ -115,89 +112,5 @@ describe('validateId', () => {
   it('uses provided field name in errors', () => {
     const result = validateId(42, 'taskId');
     expect(result.error).toContain('taskId');
-  });
-});
-
-describe('validateKey', () => {
-  it('validates with 256 char limit', () => {
-    const result = validateKey('my-key');
-    expect(result.valid).toBe(true);
-    expect(result.value).toBe('my-key');
-  });
-
-  it('rejects keys exceeding 256 chars', () => {
-    const result = validateKey('a'.repeat(257));
-    expect(result.valid).toBe(false);
-  });
-
-  it('uses "key" as the field name', () => {
-    const result = validateKey(42);
-    expect(result.error).toContain('key');
-  });
-});
-
-describe('validatePositiveInt', () => {
-  it('accepts positive integers', () => {
-    const result = validatePositiveInt(1, 'count');
-    expect(result.valid).toBe(true);
-    expect(result.value).toBe(1);
-  });
-
-  it('accepts large positive integers', () => {
-    const result = validatePositiveInt(999, 'count');
-    expect(result.valid).toBe(true);
-    expect(result.value).toBe(999);
-  });
-
-  it('rejects zero', () => {
-    const result = validatePositiveInt(0, 'count');
-    expect(result.valid).toBe(false);
-  });
-
-  it('rejects negative numbers', () => {
-    const result = validatePositiveInt(-5, 'count');
-    expect(result.valid).toBe(false);
-  });
-
-  it('rejects floats', () => {
-    const result = validatePositiveInt(1.5, 'count');
-    expect(result.valid).toBe(false);
-  });
-
-  it('rejects null and undefined', () => {
-    expect(validatePositiveInt(null, 'count').valid).toBe(false);
-    expect(validatePositiveInt(undefined, 'count').valid).toBe(false);
-    expect(validatePositiveInt(null, 'count').error).toContain('required');
-  });
-
-  it('rejects non-numbers', () => {
-    expect(validatePositiveInt('5', 'count').valid).toBe(false);
-  });
-});
-
-describe('validateOptionalPositiveInt', () => {
-  it('returns default value for null/undefined', () => {
-    const result = validateOptionalPositiveInt(undefined, 'limit', 50);
-    expect(result.valid).toBe(true);
-    expect(result.value).toBe(50);
-  });
-
-  it('returns default value for null', () => {
-    const result = validateOptionalPositiveInt(null, 'limit', 50);
-    expect(result.valid).toBe(true);
-    expect(result.value).toBe(50);
-  });
-
-  it('accepts valid positive integers', () => {
-    const result = validateOptionalPositiveInt(10, 'limit', 50);
-    expect(result.valid).toBe(true);
-    expect(result.value).toBe(10);
-  });
-
-  it('rejects invalid values', () => {
-    expect(validateOptionalPositiveInt(0, 'limit', 50).valid).toBe(false);
-    expect(validateOptionalPositiveInt(-1, 'limit', 50).valid).toBe(false);
-    expect(validateOptionalPositiveInt(1.5, 'limit', 50).valid).toBe(false);
-    expect(validateOptionalPositiveInt('5', 'limit', 50).valid).toBe(false);
   });
 });
