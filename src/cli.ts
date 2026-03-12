@@ -1,6 +1,11 @@
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import { DEFAULT_OPENCLAW_URL } from './config/constants.js';
+import {
+  DEFAULT_OPENCLAW_URL,
+  DEFAULT_RATE_LIMIT_ENABLED,
+  DEFAULT_RATE_LIMIT_RPM,
+  DEFAULT_RATE_LIMIT_WINDOW_MS,
+} from './config/constants.js';
 
 export interface CliArgs {
   openclawUrl: string;
@@ -14,6 +19,9 @@ export interface CliArgs {
   clientSecret: string | undefined;
   issuerUrl: string | undefined;
   redirectUris: string[] | undefined;
+  rateLimitEnabled: boolean;
+  rateLimitRpm: number;
+  rateLimitWindowMs: number;
 }
 
 export function parseArguments(version: string): CliArgs {
@@ -78,6 +86,27 @@ export function parseArguments(version: string): CliArgs {
       description: 'Allowed OAuth redirect URIs (comma-separated)',
       default: process.env.MCP_REDIRECT_URIS || undefined,
     })
+    .option('rate-limit', {
+      type: 'boolean',
+      description: 'Enable rate limiting (SSE mode)',
+      default:
+        process.env.RATE_LIMIT_ENABLED !== undefined
+          ? process.env.RATE_LIMIT_ENABLED === 'true'
+          : DEFAULT_RATE_LIMIT_ENABLED,
+    })
+    .option('rate-limit-rpm', {
+      type: 'number',
+      description: 'Maximum requests per minute per client',
+      default: parseInt(process.env.RATE_LIMIT_RPM || String(DEFAULT_RATE_LIMIT_RPM), 10),
+    })
+    .option('rate-limit-window-ms', {
+      type: 'number',
+      description: 'Rate limit window in milliseconds',
+      default: parseInt(
+        process.env.RATE_LIMIT_WINDOW_MS || String(DEFAULT_RATE_LIMIT_WINDOW_MS),
+        10
+      ),
+    })
     .help()
     .parseSync();
 
@@ -98,5 +127,8 @@ export function parseArguments(version: string): CliArgs {
           .map((s) => s.trim())
           .filter(Boolean)
       : undefined,
+    rateLimitEnabled: argv['rate-limit'] as boolean,
+    rateLimitRpm: argv['rate-limit-rpm'] as number,
+    rateLimitWindowMs: argv['rate-limit-window-ms'] as number,
   };
 }

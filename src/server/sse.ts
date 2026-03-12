@@ -23,8 +23,17 @@ import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 
 import { OpenClawAuthProvider, type AuthProviderConfig } from '../auth/provider.js';
+import { createRateLimiter, type RateLimiter } from '../middleware/rate-limiter.js';
 import { log, logError } from '../utils/logger.js';
 import { createMcpServer, type ToolRegistrationDeps } from './tools-registration.js';
+
+export interface RateLimitConfig {
+  enabled: boolean;
+  /** Maximum requests per window */
+  maxRequests: number;
+  /** Window duration in milliseconds */
+  windowMs: number;
+}
 
 export interface SSEServerConfig {
   port: number;
@@ -33,6 +42,8 @@ export interface SSEServerConfig {
   issuerUrl?: string;
   /** Auth is enabled when authConfig is provided */
   authConfig?: AuthProviderConfig;
+  /** Rate limiting configuration */
+  rateLimit?: RateLimitConfig;
 }
 
 // --- CORS helpers ---
@@ -142,6 +153,28 @@ export async function createSSEServer(
 
     next();
   });
+
+  // --- Rate limiting middleware (after CORS, before auth) ---
+  let rateLimiter: RateLimiter | undefined;
+
+  if (config.rateLimit?.enabled !== false) {
+    rateLimiter = createRateLimiter({
+      maxRequests: config.rateLimit?.maxRequests,
+      windowMs: config.rateLimit?.windowMs,
+    });
+    // Apply to all routes; /health is excluded below via ordering
+    app.use((req: Request, res: Response, next: NextFunction) => {
+      // Skip rate limiting for health checks
+      if (req.path === '/health') {
+        next();
+        return;
+      }
+      rateLimiter!.middleware(req, res, next);
+    });
+    log(
+      `Rate limiting enabled: ${config.rateLimit?.maxRequests ?? 60} req/${Math.round((config.rateLimit?.windowMs ?? 60_000) / 1000)}s`
+    );
+  }
 
   // --- OAuth routes (if auth enabled) ---
   let authMiddleware: ((req: Request, res: Response, next: NextFunction) => void) | undefined;
@@ -356,6 +389,11 @@ export async function createSSEServer(
       }
     }
     streamableSessions.clear();
+
+    // Dispose rate limiter
+    if (rateLimiter) {
+      rateLimiter.dispose();
+    }
 
     httpServer.close(() => {
       log('SSE server stopped');

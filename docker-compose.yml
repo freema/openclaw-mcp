@@ -13,6 +13,8 @@ services:
       - MCP_CLIENT_SECRET=${MCP_CLIENT_SECRET:-}
       - MCP_ISSUER_URL=${MCP_ISSUER_URL:-}
       - CORS_ORIGINS=${CORS_ORIGINS:-https://claude.ai}
+      - RATE_LIMIT_ENABLED=${RATE_LIMIT_ENABLED:-true}
+      - RATE_LIMIT_RPM=${RATE_LIMIT_RPM:-60}
       - NODE_ENV=production
     extra_hosts:
       - "host.docker.internal:host-gateway"

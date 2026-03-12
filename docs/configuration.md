@@ -33,6 +33,16 @@ All configuration can be done via environment variables. Copy `.env.example` to 
 - `https://claude.ai,https://your-app.com` — Multiple origins
 - `*.example.com` — Wildcard subdomain
 
+### Rate Limiting
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `RATE_LIMIT_ENABLED` | Enable rate limiting (`true`/`false`) | `true` |
+| `RATE_LIMIT_RPM` | Maximum requests per minute per client | `60` |
+| `RATE_LIMIT_WINDOW_MS` | Rate limit window in milliseconds | `60000` (1 min) |
+
+When rate limiting is enabled, clients exceeding the configured request limit receive an HTTP `429 Too Many Requests` response with a `Retry-After` header indicating how many seconds to wait before retrying. Each client is tracked independently by IP address. The `/health` endpoint is excluded from rate limiting.
+
 ### Authentication (OAuth 2.1)
 
 The server uses the MCP SDK's built-in OAuth 2.1 server with authorization code + PKCE flow. This is what Claude.ai requires for custom MCP connectors.

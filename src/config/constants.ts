@@ -7,6 +7,11 @@ export const SERVER_NAME = 'openclaw-mcp';
 export const SERVER_VERSION = pkg.version;
 export const DEFAULT_OPENCLAW_URL = 'http://127.0.0.1:18789';
 
+// Rate limiting defaults
+export const DEFAULT_RATE_LIMIT_ENABLED = true;
+export const DEFAULT_RATE_LIMIT_RPM = 60;
+export const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
+
 // Server icon: red claw on dark background — Base64 encoded SVG
 // 128x128 rounded rect with stylized claw/pincer icon
 export const SERVER_ICON_SVG_BASE64 =

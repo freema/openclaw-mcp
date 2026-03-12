@@ -32,6 +32,11 @@ async function main() {
       port: args.port,
       host: args.host,
       issuerUrl: args.issuerUrl,
+      rateLimit: {
+        enabled: args.rateLimitEnabled,
+        maxRequests: args.rateLimitRpm,
+        windowMs: args.rateLimitWindowMs,
+      },
     };
 
     // Enable OAuth when auth flag is set and client credentials are provided
