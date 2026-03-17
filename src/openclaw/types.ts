@@ -1,3 +1,13 @@
+// Instance configuration for multi-instance support
+
+export interface InstanceConfig {
+  name: string;
+  url: string;
+  token?: string;
+  timeout?: number;
+  default?: boolean;
+}
+
 // OpenAI-compatible API types
 
 export interface OpenAIChatCompletionResponse {
