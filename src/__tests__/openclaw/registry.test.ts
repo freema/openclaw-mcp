@@ -90,6 +90,27 @@ describe('InstanceRegistry', () => {
     expect(registry.isSingleInstance).toBe(false);
   });
 
+  it('rejects non-http URL schemes', () => {
+    expect(() => new InstanceRegistry([{ name: 'bad', url: 'file:///etc/passwd' }])).toThrow(
+      'must use http or https'
+    );
+    expect(() => new InstanceRegistry([{ name: 'bad', url: 'ftp://evil.com' }])).toThrow(
+      'must use http or https'
+    );
+  });
+
+  it('accepts http and https URLs', () => {
+    const registry = new InstanceRegistry([
+      { name: 'http', url: 'http://localhost:18789' },
+      { name: 'https', url: 'https://prod.example.com' },
+    ]);
+    expect(registry.size).toBe(2);
+  });
+
+  it('rejects invalid URLs', () => {
+    expect(() => new InstanceRegistry([{ name: 'bad', url: 'not-a-url' }])).toThrow('invalid URL');
+  });
+
   it('backward-compatible single instance from default env var pattern', () => {
     const registry = new InstanceRegistry([
       { name: 'default', url: 'http://127.0.0.1:18789', token: 'tok', default: true },

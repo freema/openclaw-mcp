@@ -29,6 +29,21 @@ export class InstanceRegistry {
         );
       }
 
+      // Validate URL scheme (prevent SSRF)
+      try {
+        const parsed = new URL(config.url);
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+          throw new Error(
+            `Instance "${config.name}": URL must use http or https (got ${parsed.protocol})`
+          );
+        }
+      } catch (error) {
+        if (error instanceof TypeError) {
+          throw new Error(`Instance "${config.name}": invalid URL "${config.url}"`);
+        }
+        throw error;
+      }
+
       if (names.has(config.name)) {
         throw new Error(`Duplicate instance name: "${config.name}"`);
       }
@@ -61,7 +76,11 @@ export class InstanceRegistry {
    * Get the default client.
    */
   getDefault(): OpenClawClient {
-    return this.instances.get(this.defaultName)!.client;
+    const entry = this.instances.get(this.defaultName);
+    if (!entry) {
+      throw new Error(`Default instance "${this.defaultName}" not found`);
+    }
+    return entry.client;
   }
 
   /**

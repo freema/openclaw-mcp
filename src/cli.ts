@@ -93,7 +93,22 @@ export function parseArguments(version: string): CliArgs {
       if (!Array.isArray(parsed) || parsed.length === 0) {
         throw new Error('OPENCLAW_INSTANCES must be a non-empty JSON array');
       }
-      instances = parsed as InstanceConfig[];
+      // Validate each item has required fields
+      for (const item of parsed) {
+        if (!item || typeof item.name !== 'string' || !item.name.trim()) {
+          throw new Error(
+            'Each instance in OPENCLAW_INSTANCES must have a non-empty string "name"'
+          );
+        }
+        if (typeof item.url !== 'string' || !item.url.trim()) {
+          throw new Error(`Instance "${item.name}": must have a non-empty string "url"`);
+        }
+      }
+      // Apply global timeout fallback for instances that don't specify their own
+      instances = (parsed as InstanceConfig[]).map((cfg) => ({
+        ...cfg,
+        timeout: cfg.timeout ?? argv.timeout,
+      }));
     } catch (error) {
       if (error instanceof SyntaxError) {
         throw new Error(`OPENCLAW_INSTANCES contains invalid JSON: ${error.message}`);

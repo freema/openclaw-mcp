@@ -107,8 +107,16 @@ let processorRegistry: InstanceRegistry | null = null;
 async function processTask(task: Task, registry: InstanceRegistry): Promise<void> {
   taskManager.updateStatus(task.id, 'running');
 
+  let client;
   try {
-    const { client } = registry.resolve(task.instanceId);
+    client = registry.resolve(task.instanceId).client;
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Instance not available';
+    taskManager.updateStatus(task.id, 'failed', undefined, errorMsg);
+    return;
+  }
+
+  try {
     const input = task.input as { message: string; session_id?: string };
     const response = await client.chat(input.message, input.session_id);
     taskManager.updateStatus(task.id, 'completed', response.response);
