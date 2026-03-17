@@ -154,7 +154,7 @@ See [Installation Guide](docs/installation.md) for details.
 
 ## Multi-Instance Mode
 
-Orchestrate multiple OpenClaw gateways (prod, staging, dev) from a single MCP server:
+Orchestrate multiple OpenClaw gateways from a single MCP server — name them however you like (prod, staging, dev, lobster-supreme, the-claw-abides...):
 
 ```bash
 OPENCLAW_INSTANCES='[
