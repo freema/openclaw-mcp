@@ -11,8 +11,7 @@ export const openclawStatusTool: Tool = {
     properties: {
       instance: {
         type: 'string',
-        description:
-          'Target OpenClaw instance name. Defaults to the default instance.',
+        description: 'Target OpenClaw instance name. Defaults to the default instance.',
       },
     },
   },
