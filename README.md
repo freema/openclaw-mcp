@@ -4,6 +4,7 @@
 [![CI](https://github.com/freema/openclaw-mcp/workflows/CI/badge.svg)](https://github.com/freema/openclaw-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GHCR](https://img.shields.io/badge/GHCR-ghcr.io%2Ffreema%2Fopenclaw--mcp-blue?logo=github)](https://github.com/freema/openclaw-mcp/pkgs/container/openclaw-mcp)
+[![Website](https://img.shields.io/badge/Website-openclaw--mcp.cloud-e24b4a)](https://openclaw-mcp.cloud)
 
 <a href="https://glama.ai/mcp/servers/@freema/openclaw-mcp">
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@freema/openclaw-mcp/badge" />
