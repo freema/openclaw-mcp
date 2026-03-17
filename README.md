@@ -141,6 +141,7 @@ See [Installation Guide](docs/installation.md) for details.
 |------|-------------|
 | `openclaw_chat` | Send messages to OpenClaw and get responses |
 | `openclaw_status` | Check OpenClaw gateway health |
+| `openclaw_instances` | List all configured OpenClaw instances |
 
 ### Async Tools (for long-running operations)
 
@@ -150,6 +151,22 @@ See [Installation Guide](docs/installation.md) for details.
 | `openclaw_task_status` | Check task progress and get results |
 | `openclaw_task_list` | List all tasks with filtering |
 | `openclaw_task_cancel` | Cancel a pending task |
+
+## Multi-Instance Mode
+
+Orchestrate multiple OpenClaw gateways (prod, staging, dev) from a single MCP server:
+
+```bash
+OPENCLAW_INSTANCES='[
+  {"name": "prod", "url": "http://prod:18789", "token": "tok1", "default": true},
+  {"name": "staging", "url": "http://staging:18789", "token": "tok2"},
+  {"name": "dev", "url": "http://dev:18789", "token": "tok3"}
+]'
+```
+
+All tools accept an optional `instance` parameter to target a specific gateway. When omitted, the default instance is used. Existing single-instance deployments work without any change.
+
+See [Configuration — Multi-Instance Mode](docs/configuration.md#multi-instance-mode) for details.
 
 ## Documentation
 
