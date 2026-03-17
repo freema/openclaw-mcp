@@ -1,5 +1,5 @@
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import type { OpenClawClient } from '../../openclaw/client.js';
+import type { InstanceRegistry } from '../../openclaw/registry.js';
 import { successResponse, errorResponse, type ToolResponse } from '../../utils/response-helpers.js';
 import { validateInputIsObject, validateMessage, validateId } from '../../utils/validation.js';
 
@@ -17,13 +17,18 @@ export const openclawChatTool: Tool = {
         type: 'string',
         description: 'Optional session ID for conversation context',
       },
+      instance: {
+        type: 'string',
+        description:
+          'Target OpenClaw instance name. Use openclaw_instances to list available instances. Defaults to the default instance.',
+      },
     },
     required: ['message'],
   },
 };
 
 export async function handleOpenclawChat(
-  client: OpenClawClient,
+  registry: InstanceRegistry,
   input: unknown
 ): Promise<ToolResponse> {
   if (!validateInputIsObject(input)) {
@@ -44,7 +49,17 @@ export async function handleOpenclawChat(
     sessionId = sidResult.value;
   }
 
+  let instanceName: string | undefined;
+  if (input.instance !== undefined) {
+    const instResult = validateId(input.instance, 'instance');
+    if (instResult.valid === false) {
+      return errorResponse(instResult.error);
+    }
+    instanceName = instResult.value;
+  }
+
   try {
+    const { client } = registry.resolve(instanceName);
     const response = await client.chat(msgResult.value, sessionId);
     return successResponse(response.response);
   } catch (error) {

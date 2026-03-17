@@ -24,6 +24,7 @@ export interface Task {
   startedAt?: Date;
   completedAt?: Date;
   sessionId?: string;
+  instanceId?: string;
   priority: number;
 }
 
@@ -31,6 +32,7 @@ export interface TaskCreateOptions {
   type: 'chat';
   input: unknown;
   sessionId?: string;
+  instanceId?: string;
   priority?: number;
 }
 
@@ -74,6 +76,7 @@ class TaskManager {
       input: options.input,
       createdAt: new Date(),
       sessionId: options.sessionId,
+      instanceId: options.instanceId,
       priority: options.priority ?? 0,
     };
 
@@ -92,7 +95,7 @@ class TaskManager {
   /**
    * List all tasks, optionally filtered by status
    */
-  list(filter?: { status?: TaskStatus; sessionId?: string }): Task[] {
+  list(filter?: { status?: TaskStatus; sessionId?: string; instanceId?: string }): Task[] {
     let tasks = Array.from(this.tasks.values());
 
     if (filter?.status) {
@@ -100,6 +103,9 @@ class TaskManager {
     }
     if (filter?.sessionId) {
       tasks = tasks.filter((t) => t.sessionId === filter.sessionId);
+    }
+    if (filter?.instanceId) {
+      tasks = tasks.filter((t) => t.instanceId === filter.instanceId);
     }
 
     // Sort by priority (desc) then creation time (asc)

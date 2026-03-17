@@ -3,29 +3,33 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { SERVER_NAME, SERVER_VERSION } from './config/constants.js';
 import { log, logError } from './utils/logger.js';
 import { parseArguments } from './cli.js';
-import { OpenClawClient } from './openclaw/client.js';
+import { InstanceRegistry } from './openclaw/registry.js';
 import { createMcpServer, type ToolRegistrationDeps } from './server/tools-registration.js';
 import { createSSEServer, type SSEServerConfig } from './server/sse.js';
 
 // Parse CLI arguments
 const args = parseArguments(SERVER_VERSION);
 
-// Create OpenClaw client
-const client = new OpenClawClient(args.openclawUrl, args.gatewayToken, args.timeout);
+// Create instance registry (single or multi-instance)
+const registry = new InstanceRegistry(args.instances);
 
 // Shared dependencies for tool registration
 const deps: ToolRegistrationDeps = {
-  client,
+  registry,
   serverName: SERVER_NAME,
   serverVersion: SERVER_VERSION,
 };
 
 async function main() {
   log(`Starting ${SERVER_NAME} v${SERVER_VERSION}`);
-  log(`OpenClaw URL: ${args.openclawUrl}`);
   log(`Transport: ${args.transport}`);
-  log(`Gateway token: ${args.gatewayToken ? 'configured' : 'not set'}`);
   log(`Request timeout: ${args.timeout}ms`);
+
+  // Log instance configuration
+  for (const instance of registry.list()) {
+    const defaultLabel = instance.isDefault ? ' (default)' : '';
+    log(`Instance "${instance.name}": ${instance.url}${defaultLabel}`);
+  }
 
   if (args.transport === 'sse') {
     const sseConfig: SSEServerConfig = {

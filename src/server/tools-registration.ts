@@ -9,13 +9,13 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
-import type { OpenClawClient } from '../openclaw/client.js';
+import type { InstanceRegistry } from '../openclaw/registry.js';
 import { SERVER_ICON_SVG_BASE64 } from '../config/constants.js';
 import { log, logError } from '../utils/logger.js';
 import * as tools from '../mcp/tools/index.js';
 
 export interface ToolRegistrationDeps {
-  client: OpenClawClient;
+  registry: InstanceRegistry;
   serverName: string;
   serverVersion: string;
 }
@@ -47,7 +47,7 @@ export function createMcpServer(deps: ToolRegistrationDeps): Server {
  * Register all OpenClaw tools on an existing MCP Server instance.
  */
 function registerTools(server: Server, deps: ToolRegistrationDeps): void {
-  const { client } = deps;
+  const { registry } = deps;
 
   const toolHandlers = new Map<
     string,
@@ -55,12 +55,13 @@ function registerTools(server: Server, deps: ToolRegistrationDeps): void {
       input: unknown
     ) => Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }>
   >([
-    ['openclaw_chat', (input) => tools.handleOpenclawChat(client, input)],
-    ['openclaw_status', (input) => tools.handleOpenclawStatus(client, input)],
-    ['openclaw_chat_async', (input) => tools.handleOpenclawChatAsync(client, input)],
-    ['openclaw_task_status', (input) => tools.handleOpenclawTaskStatus(client, input)],
-    ['openclaw_task_list', (input) => tools.handleOpenclawTaskList(client, input)],
-    ['openclaw_task_cancel', (input) => tools.handleOpenclawTaskCancel(client, input)],
+    ['openclaw_chat', (input) => tools.handleOpenclawChat(registry, input)],
+    ['openclaw_status', (input) => tools.handleOpenclawStatus(registry, input)],
+    ['openclaw_chat_async', (input) => tools.handleOpenclawChatAsync(registry, input)],
+    ['openclaw_task_status', (input) => tools.handleOpenclawTaskStatus(registry, input)],
+    ['openclaw_task_list', (input) => tools.handleOpenclawTaskList(registry, input)],
+    ['openclaw_task_cancel', (input) => tools.handleOpenclawTaskCancel(registry, input)],
+    ['openclaw_instances', (input) => tools.handleOpenclawInstances(registry, input)],
   ]);
 
   const allTools = [
@@ -70,6 +71,7 @@ function registerTools(server: Server, deps: ToolRegistrationDeps): void {
     tools.openclawTaskStatusTool,
     tools.openclawTaskListTool,
     tools.openclawTaskCancelTool,
+    tools.openclawInstancesTool,
   ];
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
