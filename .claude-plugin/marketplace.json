@@ -1,0 +1,23 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "openclaw-mcp",
+  "description": "Bridge Claude.ai to your self-hosted OpenClaw AI agent via the Model Context Protocol. Chat, manage sessions, and run async tasks.",
+  "owner": {
+    "name": "Tomas Grasl"
+  },
+  "plugins": [
+    {
+      "name": "openclaw",
+      "source": "./plugins/claude/openclaw",
+      "description": "OpenClaw AI assistant integration. Chat, manage sessions, access memory, and run async tasks through your OpenClaw instance.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Tomas Grasl"
+      },
+      "repository": "https://github.com/freema/openclaw-mcp",
+      "license": "MIT",
+      "keywords": ["openclaw", "mcp", "ai-agent", "claude", "orchestration", "async-tasks"],
+      "category": "integration"
+    }
+  ]
+}

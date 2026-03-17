@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>openclaw-mcp | Bridge Claude.ai to OpenClaw</title>
+<meta name="description" content="Connect Claude.ai to your self-hosted OpenClaw AI agent via the Model Context Protocol." />
+<!-- Fonts -->
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@800&display=swap" rel="stylesheet" />
+<style>
+/* === Reset & Base === */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background-color: #080808;
+  color: #ffffff;
+  font-family: 'JetBrains Mono', monospace;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.6;
+}
+a { color: inherit; text-decoration: none; }
+button { cursor: pointer; border: none; background: none; font-family: inherit; }
+table { border-collapse: collapse; }
+::selection { background-color: #e24b4a; color: white; }
+img { max-width: 100%; }
+pre, code { font-family: 'JetBrains Mono', monospace; }
+
+/* === Design Tokens === */
+:root {
+  --black: #080808;
+  --accent: #e24b4a;
+  --darker: #0a0a0a;
+  --border: #1a1a1a;
+  --text: #a0a0a0;
+}
+
+/* === Layout === */
+.container { max-width: 1280px; margin: 0 auto; padding: 0 1.5rem; }
+
+/* === Background Grid === */
+.grid-overlay {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(to right, var(--border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+  background-size: 40px 40px;
+  mask-image: radial-gradient(circle at 50% 50%, black, transparent 80%);
+  -webkit-mask-image: radial-gradient(circle at 50% 50%, black, transparent 80%);
+}
+
+/* === Typography === */
+.font-syne { font-family: 'Syne', sans-serif; }
+.font-mono { font-family: 'JetBrains Mono', monospace; }
+.text-accent { color: var(--accent); }
+.text-muted { color: var(--text); }
+.text-xs { font-size: 0.75rem; }
+.text-sm { font-size: 0.875rem; }
+.text-xl { font-size: 1.25rem; }
+.text-2xl { font-size: 1.5rem; }
+.text-3xl { font-size: 1.875rem; }
+.uppercase { text-transform: uppercase; }
+.tracking-wider { letter-spacing: 0.05em; }
+.tracking-widest { letter-spacing: 0.1em; }
+.tracking-tighter { letter-spacing: -0.05em; }
+.leading-none { line-height: 1; }
+.font-bold { font-weight: 700; }
+.font-extrabold { font-weight: 800; }
+.font-medium { font-weight: 500; }
+
+/* === Brutalist Borders === */
+.brutalist-border { border: 1px solid var(--border); }
+.brutalist-border-accent { border: 2px solid var(--accent); }
+
+/* === Animations === */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes blink {
+  from, to { opacity: 1; }
+  50% { opacity: 0; }
+}
+.animate-fade-up {
+  opacity: 0;
+  animation: fadeUp 0.8s ease-out forwards;
+}
+.delay-200 { animation-delay: 200ms; }
+.delay-400 { animation-delay: 400ms; }
+.delay-600 { animation-delay: 600ms; }
+.animate-cursor { animation: blink 1s step-end infinite; }
+
+/* === Navigation === */
+.nav {
+  position: fixed; top: 0; width: 100%; z-index: 50;
+  background: rgba(8,8,8,0.8); backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+  height: 4rem; display: flex; align-items: center;
+}
+.nav-inner {
+  display: flex; justify-content: space-between; align-items: center; width: 100%;
+}
+.nav-logo { font-size: 1.25rem; font-weight: 800; letter-spacing: -0.05em; }
+.nav-links {
+  display: none; gap: 2rem; font-size: 0.875rem;
+  text-transform: uppercase; letter-spacing: 0.05em; font-weight: 500; color: var(--text);
+}
+.nav-links a:hover { color: var(--accent); transition: color 0.2s; }
+.nav-gh { display: flex; align-items: center; gap: 0; font-size: 0.75rem; font-weight: 700; }
+.nav-gh-btn {
+  padding: 0.4rem 0.75rem; background: var(--accent); color: white;
+  display: flex; align-items: center; gap: 0.4rem; transition: background 0.2s;
+}
+.nav-gh-btn:hover { background: #dc2626; }
+.nav-gh-badge {
+  padding: 0.4rem 0.6rem; border: 1px solid var(--border); color: #fff;
+  display: flex; align-items: center; gap: 0.35rem; background: rgba(255,255,255,0.05);
+  font-size: 0.7rem; font-weight: 500;
+}
+.nav-gh-badge svg { width: 14px; height: 14px; fill: currentColor; opacity: 0.7; }
+
+/* === Hero === */
+.hero { position: relative; padding: 10rem 0 5rem; overflow: hidden; z-index: 10; text-align: center; }
+.hero h1 { font-size: 3rem; font-weight: 800; text-transform: uppercase; line-height: 1; }
+.hero-sub {
+  margin-top: 2rem; font-size: 1.25rem; color: var(--text);
+  max-width: 48rem; margin-left: auto; margin-right: auto;
+}
+.hero-buttons { margin-top: 3rem; display: flex; flex-direction: column; gap: 1rem; justify-content: center; align-items: center; }
+.btn-primary {
+  padding: 1rem 2rem; background: var(--accent); color: white; font-weight: 700;
+  font-size: 1.125rem; width: 100%; text-align: center; transition: filter 0.2s;
+}
+.btn-primary:hover { filter: brightness(1.1); }
+.btn-secondary {
+  padding: 1rem 2rem; border: 1px solid var(--border); color: white; font-weight: 700;
+  font-size: 1.125rem; width: 100%; text-align: center; transition: background 0.2s;
+}
+.btn-secondary:hover { background: rgba(255,255,255,0.05); }
+.stats-bar {
+  margin-top: 4rem; display: flex; flex-wrap: wrap; justify-content: center;
+  gap: 2rem; font-size: 0.875rem; color: var(--text);
+}
+.stats-bar span { color: var(--accent); }
+
+/* === Terminal === */
+.terminal-section { padding: 5rem 0; position: relative; z-index: 10; }
+.terminal { max-width: 56rem; margin: 0 auto; background: #0c0c0c; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); overflow: hidden; }
+.terminal-header {
+  background: var(--border); padding: 0.75rem; display: flex; align-items: center;
+  justify-content: space-between; border-bottom: 1px solid var(--border);
+}
+.terminal-dots { display: flex; gap: 0.5rem; }
+.terminal-dot { width: 0.75rem; height: 0.75rem; border: 1px solid var(--border); }
+.terminal-dot-red { background: rgba(239,68,68,0.2); }
+.terminal-dot-yellow { background: rgba(234,179,8,0.2); }
+.terminal-dot-green { background: rgba(34,197,94,0.2); }
+.terminal-title { font-size: 10px; color: var(--text); text-transform: uppercase; letter-spacing: 0.1em; }
+.terminal-body { padding: 1.5rem; font-size: 0.875rem; line-height: 1.75; overflow-x: auto; }
+.terminal-prompt { color: var(--accent); }
+.terminal-output { margin-top: 0.5rem; color: #4ade80; }
+.terminal-cursor { display: inline-block; width: 0.5rem; height: 1.25rem; background: var(--accent); margin-left: 0.5rem; vertical-align: middle; }
+
+/* === How It Works === */
+.how-section {
+  padding: 8rem 0; position: relative; z-index: 10;
+  background: var(--black); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.how-section h2 { font-size: 2.5rem; font-weight: 800; text-transform: uppercase; margin-bottom: 4rem; }
+.how-grid { display: grid; grid-template-columns: 1fr; }
+.how-step { padding: 2rem; border-bottom: 1px solid var(--border); transition: background 0.2s; }
+.how-step:last-child { border-bottom: none; }
+.how-step:hover { background: rgba(226,75,74,0.05); }
+.how-step-num { color: var(--accent); font-size: 1.875rem; font-weight: 800; margin-bottom: 1rem; }
+.how-step h3 { font-weight: 700; font-size: 1.25rem; margin-bottom: 0.5rem; }
+.how-step p { color: var(--text); font-size: 0.875rem; }
+
+/* === Features === */
+.features-section { padding: 8rem 0; position: relative; z-index: 10; }
+.features-section h2 { font-size: 2.5rem; font-weight: 800; text-transform: uppercase; margin-bottom: 4rem; text-align: right; }
+.features-grid { display: grid; grid-template-columns: 1fr; gap: 1.5rem; }
+.feature-card {
+  padding: 2rem; border: 1px solid var(--border); background: var(--darker);
+  transition: border-color 0.2s;
+}
+.feature-card:hover { border-color: var(--accent); }
+.feature-card h3 { font-weight: 800; font-size: 1.25rem; text-transform: uppercase; margin-bottom: 1rem; color: var(--accent); }
+.feature-card p { color: var(--text); font-size: 0.875rem; line-height: 1.75; }
+
+/* === Tools Table === */
+.tools-section {
+  padding: 8rem 0; position: relative; z-index: 10;
+  background: var(--black); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.tools-section h2 { font-size: 2.5rem; font-weight: 800; text-transform: uppercase; margin-bottom: 4rem; }
+.tools-grid { display: grid; grid-template-columns: 1fr; gap: 3rem; }
+.tools-col-header { border-left: 4px solid var(--accent); padding-left: 1rem; margin-bottom: 1.5rem; }
+.tools-col-header h3 { font-size: 1.5rem; font-weight: 800; text-transform: uppercase; }
+.tools-col-header p { color: var(--text); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.1em; }
+.tools-table { width: 100%; text-align: left; font-size: 0.875rem; }
+.tools-table thead { background: var(--border); }
+.tools-table th { padding: 1rem; border-right: 1px solid var(--border); }
+.tools-table th:last-child { border-right: none; }
+.tools-table td { padding: 1rem; border-top: 1px solid var(--border); }
+.tools-table td:first-child { color: var(--accent); border-right: 1px solid var(--border); }
+.tools-table td:last-child { color: var(--text); }
+
+/* === Quick Start === */
+.quickstart-section { padding: 8rem 0; position: relative; z-index: 10; }
+.quickstart-inner { max-width: 56rem; margin: 0 auto; }
+.quickstart-section h2 { font-size: 2.5rem; font-weight: 800; text-transform: uppercase; margin-bottom: 4rem; text-align: center; }
+.tabs-bar {
+  display: flex; border-bottom: 1px solid var(--border); background: var(--darker);
+  font-size: 0.75rem; text-transform: uppercase; overflow-x: auto;
+}
+.tab-btn {
+  padding: 1rem 1.5rem; color: var(--text); transition: color 0.2s;
+  white-space: nowrap; border-bottom: 2px solid transparent;
+  font-family: 'JetBrains Mono', monospace; font-size: 0.75rem; text-transform: uppercase;
+}
+.tab-btn:hover { color: white; }
+.tab-btn.active { border-bottom-color: var(--accent); color: white; }
+.tab-content { padding: 1.5rem; background: var(--black); min-height: 300px; overflow-x: auto; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+.tab-comment { color: var(--text); margin-bottom: 1rem; font-size: 0.875rem; }
+.tab-panel pre {
+  color: white; font-size: 0.875rem; line-height: 1.75;
+  white-space: pre; overflow-x: auto;
+}
+
+/* === CTA === */
+.cta-section {
+  padding: 8rem 0; position: relative; z-index: 10; text-align: center;
+  border-top: 1px solid var(--border);
+}
+.cta-section h2 { font-size: 2.5rem; font-weight: 800; text-transform: uppercase; margin-bottom: 2rem; }
+.cta-buttons { display: flex; flex-direction: column; gap: 1rem; justify-content: center; align-items: center; }
+.cta-btn-primary {
+  padding: 1.25rem 2.5rem; background: var(--accent); color: white; font-weight: 700;
+  font-size: 1.25rem; border: 2px solid var(--accent); transition: filter 0.2s;
+}
+.cta-btn-primary:hover { filter: brightness(1.1); }
+.cta-btn-secondary {
+  padding: 1.25rem 2.5rem; border: 1px solid var(--border); color: white;
+  font-weight: 700; font-size: 1.25rem; transition: background 0.2s;
+}
+.cta-btn-secondary:hover { background: rgba(255,255,255,0.05); }
+
+/* === Footer === */
+.footer { padding: 4rem 0; position: relative; z-index: 10; background: var(--darker); border-top: 1px solid var(--border); }
+.footer-inner { display: flex; flex-direction: column; gap: 2rem; }
+.footer-logo { font-size: 1.25rem; font-weight: 800; letter-spacing: -0.05em; text-transform: uppercase; }
+.footer-credit { margin-top: 1rem; color: var(--text); font-size: 0.875rem; }
+.footer-credit a { color: white; text-decoration: underline; transition: color 0.2s; }
+.footer-credit a:hover { color: var(--accent); }
+.footer-links {
+  display: flex; flex-wrap: wrap; gap: 2rem; font-size: 0.75rem;
+  text-transform: uppercase; letter-spacing: 0.1em; color: var(--text);
+}
+.footer-links a:hover { color: var(--accent); transition: color 0.2s; }
+.footer-bottom {
+  margin-top: 3rem; padding-top: 2rem; border-top: 1px solid rgba(26,26,26,0.5);
+  text-align: center; font-size: 10px; color: rgba(160,160,160,0.5);
+}
+
+/* === Desktop (640px+) === */
+@media (min-width: 640px) {
+  .nav-links { display: flex; }
+  .hero h1 { font-size: 6rem; }
+  .hero-sub { font-size: 1.5rem; }
+  .hero-buttons { flex-direction: row; }
+  .btn-primary, .btn-secondary { width: auto; }
+  .how-grid { grid-template-columns: repeat(4, 1fr); }
+  .how-step { border-bottom: none; border-right: 1px solid var(--border); }
+  .how-step:last-child { border-right: none; }
+  .features-grid { grid-template-columns: repeat(3, 1fr); }
+  .tools-grid { grid-template-columns: repeat(2, 1fr); }
+  .cta-section h2 { font-size: 3.75rem; }
+  .cta-buttons { flex-direction: row; }
+  .footer-inner { flex-direction: row; justify-content: space-between; align-items: center; }
+  .plugin-cards { grid-template-columns: repeat(3, 1fr) !important; }
+}
+</style>
+</head>
+<body>
+<!-- Background Grid -->
+<div class="grid-overlay"></div>
+
+<!-- Navigation -->
+<nav class="nav">
+  <div class="container nav-inner">
+    <div class="font-syne nav-logo">&#x1F99E; openclaw-mcp</div>
+    <div class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#features">Features</a>
+      <a href="#tools">Tools</a>
+      <a href="#quickstart">Quick start</a>
+      <a href="#plugin">Plugin</a>
+    </div>
+    <div class="nav-gh">
+      <a class="nav-gh-btn" href="https://github.com/freema/openclaw-mcp" target="_blank" rel="noopener">
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="white"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
+      <span class="nav-gh-badge">
+        <svg viewBox="0 0 16 16"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg>
+        <span id="nav-star-count">83</span>
+      </span>
+      <span class="nav-gh-badge">
+        <svg viewBox="0 0 16 16"><path d="M5 5.372v.878c0 .414.336.75.75.75h4.5a.75.75 0 00.75-.75v-.878a2.25 2.25 0 111.5 0v.878a2.25 2.25 0 01-2.25 2.25h-1.5v2.128a2.251 2.251 0 11-1.5 0V8.5h-1.5A2.25 2.25 0 013.5 6.25v-.878a2.25 2.25 0 111.5 0zM5 3.25a.75.75 0 10-1.5 0 .75.75 0 001.5 0zm6.75.75a.75.75 0 100-1.5.75.75 0 000 1.5zM8 12.75a.75.75 0 10-1.5 0 .75.75 0 001.5 0z"/></svg>
+        <span id="nav-fork-count">13</span>
+      </span>
+    </div>
+  </div>
+</nav>
+
+<!-- Hero -->
+<header class="hero">
+  <div class="container">
+    <h1 class="font-syne animate-fade-up">
+      Bridge Claude.ai <br /><span class="text-accent">to OpenClaw</span>
+    </h1>
+    <p class="hero-sub animate-fade-up delay-200">
+      AI orchestrating AI. Connect Claude.ai to your self-hosted OpenClaw AI agent via the Model Context Protocol.
+    </p>
+    <div class="hero-buttons animate-fade-up delay-400">
+      <a class="btn-primary" href="#quickstart">Get started</a>
+      <a class="btn-secondary" href="https://github.com/freema/openclaw-mcp" target="_blank" rel="noopener">View on GitHub</a>
+    </div>
+    <!-- Stats Bar -->
+    <div class="stats-bar animate-fade-up delay-600">
+      <div><span id="star-count">83</span> stars</div>
+      <div><span id="fork-count">13</span> forks</div>
+      <div>MIT LICENSE</div>
+      <div>OAuth 2.1</div>
+    </div>
+  </div>
+</header>
+
+<!-- Demo GIF -->
+<section class="terminal-section">
+  <div class="container">
+    <div class="terminal brutalist-border" style="max-width:56rem;margin:0 auto">
+      <div class="terminal-header">
+        <div class="terminal-dots">
+          <div class="terminal-dot terminal-dot-red brutalist-border"></div>
+          <div class="terminal-dot terminal-dot-yellow brutalist-border"></div>
+          <div class="terminal-dot terminal-dot-green brutalist-border"></div>
+        </div>
+        <div class="terminal-title font-mono">Claude.ai &mdash; openclaw-mcp demo</div>
+        <div style="width:3rem"></div>
+      </div>
+      <img src="assets/claude-ai-demo.gif" alt="openclaw-mcp demo — Claude.ai chatting with OpenClaw agent" style="width:100%;display:block" loading="lazy" />
+    </div>
+  </div>
+</section>
+
+<!-- How It Works -->
+<section class="how-section" id="how">
+  <div class="container">
+    <h2 class="font-syne">How it works</h2>
+    <div class="how-grid brutalist-border">
+      <div class="how-step">
+        <div class="how-step-num font-syne">01</div>
+        <h3>Request</h3>
+        <p>Ask Claude.ai to perform a task using your private agent tools.</p>
+      </div>
+      <div class="how-step">
+        <div class="how-step-num font-syne">02</div>
+        <h3>Authorize</h3>
+        <p>One-time OAuth 2.1 handshake secures the bridge between platforms.</p>
+      </div>
+      <div class="how-step">
+        <div class="how-step-num font-syne">03</div>
+        <h3>Execute</h3>
+        <p>OpenClaw processes the task locally on your own infrastructure.</p>
+      </div>
+      <div class="how-step">
+        <div class="how-step-num font-syne">04</div>
+        <h3>Resolve</h3>
+        <p>Structured results flow back to Claude for immediate synthesis.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Features -->
+<section class="features-section" id="features">
+  <div class="container">
+    <h2 class="font-syne">Core Capabilities</h2>
+    <div class="features-grid">
+      <div class="feature-card">
+        <h3 class="font-syne">OAuth 2.1</h3>
+        <p>Modern, secure authorization flow. Your credentials never touch the MCP bridge directly.</p>
+      </div>
+      <div class="feature-card">
+        <h3 class="font-syne">Async Queue</h3>
+        <p>Handle long-running AI tasks without timeouts. Polling mechanisms built directly into the MCP tools.</p>
+      </div>
+      <div class="feature-card">
+        <h3 class="font-syne">Docker Ready</h3>
+        <p>Official lightweight images for zero-fuss deployment in any containerized environment.</p>
+      </div>
+      <div class="feature-card">
+        <h3 class="font-syne">Two Transports</h3>
+        <p>Supports both Stdio (for Desktop) and SSE (for remote hosting) transport layers out of the box.</p>
+      </div>
+      <div class="feature-card">
+        <h3 class="font-syne">Input Validation</h3>
+        <p>Strict Zod-based schema validation ensures Claude provides the exact parameters your agent needs.</p>
+      </div>
+      <div class="feature-card">
+        <h3 class="font-syne">Zero Config</h3>
+        <p>Auto-discovery of your OpenClaw agent tools. Just provide the host URL and start chatting.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- MCP Tools Table -->
+<section class="tools-section" id="tools">
+  <div class="container">
+    <h2 class="font-syne">Available Tools</h2>
+    <div class="tools-grid">
+      <!-- Sync Column -->
+      <div>
+        <div class="tools-col-header">
+          <h3 class="font-syne">Synchronous</h3>
+          <p>Direct interaction</p>
+        </div>
+        <div class="brutalist-border" style="overflow:hidden">
+          <table class="tools-table font-mono">
+            <thead><tr><th>Tool Name</th><th>Function</th></tr></thead>
+            <tbody>
+              <tr><td>openclaw_chat</td><td>Simple text inference</td></tr>
+              <tr><td>openclaw_status</td><td>Agent health check</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <!-- Async Column -->
+      <div>
+        <div class="tools-col-header">
+          <h3 class="font-syne">Asynchronous</h3>
+          <p>Background execution</p>
+        </div>
+        <div class="brutalist-border" style="overflow:hidden">
+          <table class="tools-table font-mono">
+            <thead><tr><th>Tool Name</th><th>Function</th></tr></thead>
+            <tbody>
+              <tr><td>openclaw_chat_async</td><td>Queued chat execution</td></tr>
+              <tr><td>openclaw_task_status</td><td>Check specific task progress</td></tr>
+              <tr><td>openclaw_task_list</td><td>List all running tasks</td></tr>
+              <tr><td>openclaw_task_cancel</td><td>Kill a pending task</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Quick Start -->
+<section class="quickstart-section" id="quickstart">
+  <div class="container">
+    <div class="quickstart-inner">
+      <h2 class="font-syne">Quick Start</h2>
+      <div class="brutalist-border">
+        <!-- Tabs -->
+        <div class="tabs-bar">
+          <button class="tab-btn active" data-tab="docker">Docker (Recommended)</button>
+          <button class="tab-btn" data-tab="local">Local (JSON)</button>
+          <button class="tab-btn" data-tab="remote">CLI (OAuth)</button>
+        </div>
+        <!-- Tab Content -->
+        <div class="tab-content">
+          <!-- Docker (Recommended - default) -->
+          <div class="tab-panel active" id="tab-docker">
+            <p class="tab-comment"># Pre-built images published to GHCR on every release</p>
+<pre><code># docker-compose.yml
+services:
+  openclaw-mcp:
+    image: ghcr.io/freema/openclaw-mcp:latest
+    environment:
+      - OPENCLAW_URL=http://host.docker.internal:18789
+      - OPENCLAW_GATEWAY_TOKEN=your-token
+      - AUTH_ENABLED=true
+      - MCP_CLIENT_ID=openclaw
+      - MCP_CLIENT_SECRET=${MCP_CLIENT_SECRET}
+    ports:
+      - "3000:3000"</code></pre>
+          </div>
+          <!-- Local -->
+          <div class="tab-panel" id="tab-local">
+            <p class="tab-comment">// Add this to your Claude Desktop config (claude_desktop_config.json)</p>
+<pre><code>{
+  "mcpServers": {
+    "openclaw": {
+      "command": "npx",
+      "args": ["openclaw-mcp"],
+      "env": {
+        "OPENCLAW_URL": "http://127.0.0.1:18789",
+        "OPENCLAW_GATEWAY_TOKEN": "your-token"
+      }
+    }
+  }
+}</code></pre>
+          </div>
+          <!-- Remote -->
+          <div class="tab-panel" id="tab-remote">
+            <p class="tab-comment"># Run with OAuth credentials for remote access</p>
+<pre><code>AUTH_ENABLED=true \
+MCP_CLIENT_ID=openclaw \
+MCP_CLIENT_SECRET=$MCP_CLIENT_SECRET \
+MCP_ISSUER_URL=https://mcp.your-domain.com \
+CORS_ORIGINS=https://claude.ai \
+OPENCLAW_GATEWAY_TOKEN=your-token \
+npx openclaw-mcp --transport sse --port 3000</code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Claude Code Plugin -->
+<section class="how-section" id="plugin">
+  <div class="container">
+    <h2 class="font-syne">Claude Code Plugin</h2>
+    <p class="text-muted" style="max-width:48rem;margin-bottom:2rem;font-size:0.875rem;line-height:1.75">
+      This repo ships a <a href="https://github.com/freema/openclaw-mcp/tree/main/.claude-plugin" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:underline">marketplace plugin</a> for Claude Code.
+      Install it directly to get OpenClaw skills, commands, and agents wired into your Claude Code session.
+    </p>
+    <div class="brutalist-border" style="max-width:56rem;overflow:hidden">
+      <div style="background:var(--border);padding:0.75rem 1rem;font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--text)">Install via Claude Code CLI</div>
+      <div style="padding:1.5rem;background:#0c0c0c;font-size:0.875rem;line-height:1.75">
+        <div><span class="text-accent">$</span> claude plugin install github:freema/openclaw-mcp</div>
+      </div>
+    </div>
+    <div style="margin-top:2rem;display:grid;grid-template-columns:1fr;gap:1rem;max-width:56rem" class="plugin-cards">
+      <div class="feature-card">
+        <h3 class="font-syne">Skills</h3>
+        <p>Auto-triggers when you ask Claude to delegate tasks, chat with OpenClaw, or check gateway status.</p>
+      </div>
+      <div class="feature-card">
+        <h3 class="font-syne">Commands</h3>
+        <p><code style="color:var(--accent)">/claw:chat</code> and <code style="color:var(--accent)">/claw:status</code> for direct interaction from the CLI.</p>
+      </div>
+      <div class="feature-card">
+        <h3 class="font-syne">Agents</h3>
+        <p><code style="color:var(--accent)">task-delegator</code> agent for spawning long-running async operations with progress monitoring.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA Section -->
+<section class="cta-section">
+  <div class="container">
+    <h2 class="font-syne">Ready to connect <br />Claude.ai to your agent?</h2>
+    <div class="cta-buttons">
+      <a class="cta-btn-primary" href="https://github.com/freema/openclaw-mcp/blob/main/docs/installation.md" target="_blank" rel="noopener">Deploy Now</a>
+      <a class="cta-btn-secondary" href="https://github.com/freema/openclaw-mcp" target="_blank" rel="noopener">Read Documentation</a>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-inner">
+      <div>
+        <div class="font-syne footer-logo">&#x1F99E; openclaw-mcp</div>
+        <p class="footer-credit font-mono">Built by <a href="https://www.tomasgrasl.cz/" target="_blank" rel="noopener">Tom&aacute;&scaron; Grasl</a> &middot; MIT License</p>
+      </div>
+      <div class="footer-links font-mono">
+        <a href="https://github.com/freema/openclaw-mcp" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/freema/openclaw-mcp/blob/main/docs/installation.md" target="_blank" rel="noopener">Docs</a>
+        <a href="https://www.npmjs.com/package/openclaw-mcp" target="_blank" rel="noopener">NPM</a>
+      </div>
+    </div>
+    <div class="footer-bottom font-mono">
+      &copy; 2024 OPENCLAW-MCP. ALL RIGHTS RESERVED.
+    </div>
+  </div>
+</footer>
+
+<!-- Tab Switching Script -->
+<script>
+(function() {
+  var btns = document.querySelectorAll('.tab-btn');
+  var panels = document.querySelectorAll('.tab-panel');
+  btns.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      btns.forEach(function(b) { b.classList.remove('active'); });
+      panels.forEach(function(p) { p.classList.remove('active'); });
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.getAttribute('data-tab')).classList.add('active');
+    });
+  });
+})();
+</script>
+
+<!-- Live Star/Fork Count from GitHub API -->
+<script>
+(function() {
+  var x = new XMLHttpRequest();
+  x.open('GET', 'https://api.github.com/repos/freema/openclaw-mcp', true);
+  x.onload = function() {
+    if (x.status === 200) {
+      try {
+        var d = JSON.parse(x.responseText);
+        if (d.stargazers_count !== undefined) {
+          document.getElementById('star-count').textContent = d.stargazers_count;
+          document.getElementById('nav-star-count').textContent = d.stargazers_count;
+        }
+        if (d.forks_count !== undefined) {
+          document.getElementById('fork-count').textContent = d.forks_count;
+          document.getElementById('nav-fork-count').textContent = d.forks_count;
+        }
+      } catch(e) {}
+    }
+  };
+  x.send();
+})();
+</script>
+</body>
+</html>
