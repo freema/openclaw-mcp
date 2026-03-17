@@ -1,0 +1,103 @@
+name: Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to review (only for manual trigger)'
+        required: true
+        type: number
+      cli:
+        description: 'AI CLI to use'
+        required: false
+        default: 'claude-code'
+        type: choice
+        options:
+          - claude-code
+          - codex
+      prompt:
+        description: 'Additional review instructions (optional)'
+        required: false
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    name: AI Code Review
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && startsWith(github.event.comment.body, '/review'))
+    steps:
+      - name: React to comment
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes'
+            });
+
+      - name: Resolve PR context
+        id: ctx
+        uses: actions/github-script@v7
+        with:
+          script: |
+            let prNumber, cli = 'claude-code', prompt = '';
+
+            if (context.eventName === 'pull_request') {
+              prNumber = context.payload.pull_request.number;
+            } else if (context.eventName === 'issue_comment') {
+              prNumber = context.issue.number;
+              const body = context.payload.comment.body.trim();
+              const parts = body.split(/\s+/).slice(1); // remove /review
+              if (parts.length > 0 && ['codex', 'claude-code'].includes(parts[0])) {
+                cli = parts.shift();
+              }
+              prompt = parts.join(' ');
+            } else {
+              // workflow_dispatch
+              prNumber = context.payload.inputs.pr_number;
+              cli = context.payload.inputs.cli || 'claude-code';
+              prompt = context.payload.inputs.prompt || '';
+            }
+
+            const ref = context.eventName === 'pull_request'
+              ? context.payload.pull_request.head.ref
+              : `refs/pull/${prNumber}/head`;
+
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('cli', cli);
+            core.setOutput('prompt', prompt);
+            core.setOutput('ref', ref);
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.ctx.outputs.ref }}
+
+      - name: Fetch base branch
+        run: git fetch origin main
+
+      - uses: freema/codeforge@v1
+        with:
+          api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          cli: ${{ steps.ctx.outputs.cli }}
+          prompt: ${{ steps.ctx.outputs.prompt }}
+          pr_number: ${{ steps.ctx.outputs.pr_number }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
