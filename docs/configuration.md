@@ -16,6 +16,21 @@ All configuration can be done via environment variables. Copy `.env.example` to 
 
 Orchestrate multiple OpenClaw gateways from a single MCP server. Set `OPENCLAW_INSTANCES` as a JSON array — when present, it takes precedence over `OPENCLAW_URL` / `OPENCLAW_GATEWAY_TOKEN`.
 
+```
+                         ┌─────────────────┐
+                         │  Claude Client   │
+                         └────────┬────────┘
+                                  │
+                    ┌─────────────▼─────────────┐
+                    │   OpenClaw MCP Bridge      │
+                    │                            │
+                    │   instance="prod"  ──────────────► OpenClaw GW (prod)
+                    │   instance="staging" ────────────► OpenClaw GW (staging)
+                    │   instance="dev"  ───────────────► OpenClaw GW (dev)
+                    │   (no instance)   ──► default ──► OpenClaw GW (prod)
+                    └────────────────────────────┘
+```
+
 | Variable             | Description                    | Default                       |
 | -------------------- | ------------------------------ | ----------------------------- |
 | `OPENCLAW_INSTANCES` | JSON array of instance configs | (none — single-instance mode) |
@@ -45,11 +60,44 @@ Each instance object supports:
 All gateway-facing tools (`openclaw_chat`, `openclaw_status`, `openclaw_chat_async`) accept an optional `instance` parameter. When omitted, the default instance is used.
 
 ```
+# Target a specific instance
 openclaw_chat message="Hello" instance="staging"
-openclaw_instances  # list all available instances
+
+# Check health of a specific gateway
+openclaw_status instance="prod"
+
+# List all available instances (names, URLs, default — tokens are never exposed)
+openclaw_instances
+
+# Async tasks also support instance targeting
+openclaw_chat_async message="Run migration" instance="dev"
+
+# Filter task list by instance
+openclaw_task_list instance="staging"
 ```
 
-**Backward compatibility:** When `OPENCLAW_INSTANCES` is not set, the server creates a single `"default"` instance from `OPENCLAW_URL` + `OPENCLAW_GATEWAY_TOKEN`. Existing deployments work without any configuration change.
+**How instance resolution works:**
+
+1. If `instance` parameter is provided → use that instance
+2. If `instance` is omitted → use the instance marked as `default`
+3. If no instance is marked as default → the first instance in the array is used
+
+Each instance gets its own isolated HTTP client with independent auth token, timeout, and base URL. Async tasks store the target instance ID so results are always routed correctly.
+
+**Docker Compose with multi-instance:**
+
+```yaml
+services:
+  mcp-bridge:
+    image: ghcr.io/freema/openclaw-mcp:latest
+    environment:
+      - OPENCLAW_INSTANCES=[{"name":"prod","url":"http://prod-gw:18789","token":"tok1","default":true},{"name":"staging","url":"http://staging-gw:18789","token":"tok2"}]
+      - AUTH_ENABLED=true
+      - MCP_CLIENT_ID=openclaw
+      - MCP_CLIENT_SECRET=${MCP_CLIENT_SECRET}
+```
+
+**Backward compatibility:** When `OPENCLAW_INSTANCES` is not set, the server creates a single `"default"` instance from `OPENCLAW_URL` + `OPENCLAW_GATEWAY_TOKEN`. Existing deployments work without any configuration change — zero migration required.
 
 ### Server Settings (SSE transport)
 
