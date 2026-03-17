@@ -154,7 +154,39 @@ See [Installation Guide](docs/installation.md) for details.
 
 ## Multi-Instance Mode
 
-Orchestrate multiple OpenClaw gateways from a single MCP server — name them however you like (prod, staging, dev, lobster-supreme, the-claw-abides...):
+Orchestrate multiple OpenClaw gateways from a single MCP server. One bridge, many claws — route requests to prod, staging, dev, or whatever you name them (lobster-supreme and the-claw-abides are perfectly valid names).
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                        Claude.ai / Claude Desktop                    │
+│                              (MCP Client)                            │
+└──────────────────────┬───────────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                     OpenClaw MCP Bridge Server                        │
+│                                                                      │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐               │
+│  │  Instance     │  │  Instance     │  │  Instance     │              │
+│  │  Registry     │  │  Resolver     │  │  Validator    │              │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘               │
+│         │                 │                  │                        │
+│  ┌──────┴─────────────────┴──────────────────┴───────┐               │
+│  │              Per-Instance OpenClaw Clients          │              │
+│  │     (separate auth, timeout, URL per instance)     │              │
+│  └────────┬──────────────┬──────────────┬────────────┘               │
+└───────────┼──────────────┼──────────────┼────────────────────────────┘
+            │              │              │
+            ▼              ▼              ▼
+   ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+   │  🦞 prod     │ │  🦞 staging  │ │  🦞 dev      │
+   │  (default)   │ │              │ │              │
+   │  :18789      │ │  :18789      │ │  :18789      │
+   │  OpenClaw GW │ │  OpenClaw GW │ │  OpenClaw GW │
+   └──────────────┘ └──────────────┘ └──────────────┘
+```
+
+### Setup
 
 ```bash
 OPENCLAW_INSTANCES='[
@@ -164,9 +196,35 @@ OPENCLAW_INSTANCES='[
 ]'
 ```
 
-All tools accept an optional `instance` parameter to target a specific gateway. When omitted, the default instance is used. Existing single-instance deployments work without any change.
+### Usage
 
-See [Configuration — Multi-Instance Mode](docs/configuration.md#multi-instance-mode) for details.
+All tools accept an optional `instance` parameter to target a specific gateway:
+
+```
+# Chat with staging instance
+openclaw_chat message="Deploy status?" instance="staging"
+
+# Check health of prod
+openclaw_status instance="prod"
+
+# List all configured instances
+openclaw_instances
+
+# Async task targeting dev
+openclaw_chat_async message="Run tests" instance="dev"
+```
+
+When `instance` is omitted, the default instance is used. Each instance has its own auth token, timeout, and URL — fully isolated.
+
+### Key Features
+
+- **Zero-migration upgrade** — existing single-instance deployments work without any config change
+- **Per-instance isolation** — separate auth tokens, timeouts, and URLs
+- **Dynamic routing** — Claude picks the right instance per request
+- **Task tracking** — async tasks remember which instance they target
+- **Security** — tokens are never exposed via `openclaw_instances`
+
+See [Configuration — Multi-Instance Mode](docs/configuration.md#multi-instance-mode) for the full reference.
 
 ## Documentation
 
