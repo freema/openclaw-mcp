@@ -12,10 +12,11 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         node-version: [20, 22]
 
     steps:
@@ -32,9 +33,11 @@ jobs:
         run: npm ci --no-audit --no-fund
 
       - name: Lint
+        if: matrix.os == 'ubuntu-latest'
         run: npm run lint
 
       - name: Format check
+        if: matrix.os == 'ubuntu-latest'
         run: npm run format:check
 
       - name: Type check
@@ -47,7 +50,7 @@ jobs:
         run: npm run test:run
 
       - name: Upload artifacts
-        if: matrix.node-version == 20
+        if: matrix.node-version == 20 && matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v5
         with:
           name: dist
