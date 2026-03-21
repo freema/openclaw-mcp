@@ -129,6 +129,7 @@ pre, code { font-family: 'JetBrains Mono', monospace; }
   display: none; gap: 2rem; font-size: 0.875rem;
   text-transform: uppercase; letter-spacing: 0.05em; font-weight: 500; color: var(--text);
 }
+.hamburger { display: none; }
 .nav-links a:hover { color: var(--accent); transition: color 0.2s; }
 .nav-gh { display: flex; align-items: center; gap: 0; font-size: 0.75rem; font-weight: 700; }
 .nav-gh-btn {
@@ -288,8 +289,106 @@ pre, code { font-family: 'JetBrains Mono', monospace; }
   text-align: center; font-size: 10px; color: rgba(160,160,160,0.5);
 }
 
-/* === Desktop (640px+) === */
-@media (min-width: 640px) {
+/* === Mobile Hamburger Menu === */
+.hamburger {
+  display: flex; flex-direction: column; gap: 5px; padding: 0.5rem;
+  cursor: pointer; z-index: 60; background: none; border: none;
+}
+.hamburger span {
+  display: block; width: 22px; height: 2px; background: #fff;
+  transition: transform 0.3s, opacity 0.3s;
+}
+.hamburger.active span:nth-child(1) { transform: rotate(45deg) translate(5px, 5px); }
+.hamburger.active span:nth-child(2) { opacity: 0; }
+.hamburger.active span:nth-child(3) { transform: rotate(-45deg) translate(5px, -5px); }
+
+.mobile-menu {
+  display: none; position: fixed; inset: 0; z-index: 55;
+  background: rgba(8,8,8,0.97); backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  flex-direction: column; align-items: center; justify-content: center; gap: 2rem;
+  font-size: 1.25rem; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700;
+}
+.mobile-menu.active { display: flex; }
+.mobile-menu a { color: var(--text); transition: color 0.2s; padding: 0.5rem 1rem; }
+.mobile-menu a:hover, .mobile-menu a:active { color: var(--accent); }
+
+/* === Mobile-first fixes === */
+@media (max-width: 639px) {
+  .hamburger { display: flex; }
+  .nav-gh { display: none; }
+
+  .hero { padding: 7rem 0 3rem; }
+  .hero h1 { font-size: 2.25rem; }
+  .hero-sub { font-size: 1rem; margin-top: 1.25rem; }
+  .hero-buttons { margin-top: 2rem; gap: 0.75rem; }
+  .btn-primary, .btn-secondary { padding: 0.875rem 1.5rem; font-size: 1rem; }
+  .stats-bar { margin-top: 2.5rem; gap: 1rem; font-size: 0.75rem; }
+
+  .how-section, .features-section, .tools-section, .quickstart-section, .cta-section {
+    padding: 4rem 0;
+  }
+  .how-section h2, .features-section h2, .tools-section h2,
+  .quickstart-section h2, .cta-section h2 {
+    font-size: 1.75rem; margin-bottom: 2rem;
+  }
+
+  .how-step { padding: 1.5rem; }
+  .how-step-num { font-size: 1.5rem; }
+  .how-step h3 { font-size: 1.1rem; }
+
+  .features-grid { gap: 1rem; }
+  .feature-card { padding: 1.5rem; }
+  .feature-card h3 { font-size: 1.1rem; }
+
+  .tools-table { font-size: 0.75rem; }
+  .tools-table th, .tools-table td { padding: 0.75rem 0.5rem; }
+  .tools-col-header h3 { font-size: 1.25rem; }
+
+  .tab-btn { padding: 0.75rem 1rem; font-size: 0.65rem; }
+  .tab-content { padding: 1rem; }
+  .tab-content pre code { font-size: 0.7rem; word-break: break-all; white-space: pre-wrap; }
+
+  .cta-btn-primary, .cta-btn-secondary {
+    padding: 1rem 2rem; font-size: 1rem; width: 100%; text-align: center;
+  }
+
+  .footer { padding: 2.5rem 0; }
+  .footer-links { gap: 1.25rem; }
+  .footer-bottom { margin-top: 2rem; }
+
+  .plugin-cards { gap: 0.75rem !important; }
+
+  /* Prevent horizontal overflow */
+  .terminal-body { font-size: 0.75rem; padding: 1rem; }
+  .container { padding: 0 1rem; }
+}
+
+/* === Tablet (640px - 1023px) === */
+@media (min-width: 640px) and (max-width: 1023px) {
+  .hamburger { display: flex; }
+  .nav-links { display: none; }
+  .hero h1 { font-size: 4rem; }
+  .hero-sub { font-size: 1.25rem; }
+  .hero-buttons { flex-direction: row; }
+  .btn-primary, .btn-secondary { width: auto; }
+  .how-grid { grid-template-columns: repeat(2, 1fr); }
+  .how-step:nth-child(2) { border-right: none; }
+  .features-grid { grid-template-columns: repeat(2, 1fr); }
+  .tools-grid { grid-template-columns: repeat(2, 1fr); }
+  .cta-section h2 { font-size: 2.5rem; }
+  .cta-buttons { flex-direction: row; }
+  .footer-inner { flex-direction: row; justify-content: space-between; align-items: center; }
+  .plugin-cards { grid-template-columns: repeat(2, 1fr) !important; }
+
+  .how-section, .features-section, .tools-section, .quickstart-section, .cta-section {
+    padding: 5rem 0;
+  }
+}
+
+/* === Desktop (1024px+) === */
+@media (min-width: 1024px) {
+  .hamburger { display: none; }
   .nav-links { display: flex; }
   .hero h1 { font-size: 6rem; }
   .hero-sub { font-size: 1.5rem; }
@@ -322,6 +421,9 @@ pre, code { font-family: 'JetBrains Mono', monospace; }
       <a href="#quickstart">Quick start</a>
       <a href="#plugin">Plugin</a>
     </div>
+    <button class="hamburger" aria-label="Menu" onclick="document.querySelector('.mobile-menu').classList.toggle('active');this.classList.toggle('active')">
+      <span></span><span></span><span></span>
+    </button>
     <div class="nav-gh">
       <a class="nav-gh-btn" href="https://github.com/freema/openclaw-mcp" target="_blank" rel="noopener">
         <svg viewBox="0 0 16 16" width="16" height="16" fill="white"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
@@ -338,6 +440,16 @@ pre, code { font-family: 'JetBrains Mono', monospace; }
     </div>
   </div>
 </nav>
+
+<!-- Mobile Menu Overlay -->
+<div class="mobile-menu" id="mobile-menu">
+  <a href="#how" onclick="closeMobileMenu()">How it works</a>
+  <a href="#features" onclick="closeMobileMenu()">Features</a>
+  <a href="#tools" onclick="closeMobileMenu()">Tools</a>
+  <a href="#quickstart" onclick="closeMobileMenu()">Quick start</a>
+  <a href="#plugin" onclick="closeMobileMenu()">Plugin</a>
+  <a href="https://github.com/freema/openclaw-mcp" target="_blank" rel="noopener" style="color:var(--accent)">GitHub</a>
+</div>
 
 <!-- Hero -->
 <header class="hero">
@@ -609,6 +721,14 @@ npx openclaw-mcp --transport sse --port 3000</code></pre>
     </div>
   </div>
 </footer>
+
+<!-- Mobile Menu Script -->
+<script>
+function closeMobileMenu() {
+  document.querySelector('.mobile-menu').classList.remove('active');
+  document.querySelector('.hamburger').classList.remove('active');
+}
+</script>
 
 <!-- Tab Switching Script -->
 <script>
