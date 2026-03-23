@@ -10,17 +10,16 @@ import { createSSEServer, type SSEServerConfig } from './server/sse.js';
 // Parse CLI arguments
 const args = parseArguments(SERVER_VERSION);
 
-// Create instance registry (single or multi-instance)
-const registry = new InstanceRegistry(args.instances);
-
-// Shared dependencies for tool registration
-const deps: ToolRegistrationDeps = {
-  registry,
-  serverName: SERVER_NAME,
-  serverVersion: SERVER_VERSION,
-};
-
 async function main() {
+  // Create instance registry with full SSRF validation (including DNS resolution)
+  const registry = await InstanceRegistry.create(args.instances);
+
+  // Shared dependencies for tool registration
+  const deps: ToolRegistrationDeps = {
+    registry,
+    serverName: SERVER_NAME,
+    serverVersion: SERVER_VERSION,
+  };
   log(`Starting ${SERVER_NAME} v${SERVER_VERSION}`);
   log(`Transport: ${args.transport}`);
   log(`Request timeout: ${args.timeout}ms`);
