@@ -60,6 +60,8 @@ const TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
 const AUTH_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const REFRESH_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const REAPER_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_TOKENS_PER_CLIENT = 100;
+const MAX_AUTH_CODES = 50;
 
 // An array that says "yes" to any .includes() check.
 // The SDK authorize handler validates redirect_uri against client.redirect_uris.includes().
@@ -168,11 +170,33 @@ export class OpenClawAuthProvider implements OAuthServerProvider {
   /**
    * Auto-approve: generate auth code and redirect immediately.
    */
+  /**
+   * Count active tokens for a given client ID.
+   */
+  private countTokensForClient(clientId: string): number {
+    let count = 0;
+    for (const data of this.tokens.values()) {
+      if (data.clientId === clientId) count++;
+    }
+    for (const data of this.refreshTokens.values()) {
+      if (data.clientId === clientId) count++;
+    }
+    return count;
+  }
+
   async authorize(
     client: OAuthClientInformationFull,
     params: AuthorizationParams,
     res: Response
   ): Promise<void> {
+    // Enforce auth code limit to prevent memory exhaustion
+    if (this.codes.size >= MAX_AUTH_CODES) {
+      this.reapExpired();
+      if (this.codes.size >= MAX_AUTH_CODES) {
+        throw new InvalidRequestError('Too many pending authorization requests. Try again later.');
+      }
+    }
+
     const code = randomUUID();
 
     this.codes.set(code, { client, params, createdAt: Date.now() });
@@ -217,6 +241,16 @@ export class OpenClawAuthProvider implements OAuthServerProvider {
     }
 
     this.codes.delete(authorizationCode);
+
+    // Enforce per-client token limit
+    if (this.countTokensForClient(client.client_id) >= MAX_TOKENS_PER_CLIENT) {
+      this.reapExpired();
+      if (this.countTokensForClient(client.client_id) >= MAX_TOKENS_PER_CLIENT) {
+        throw new InvalidRequestError(
+          'Token limit reached for this client. Revoke existing tokens or wait for expiry.'
+        );
+      }
+    }
 
     const accessToken = randomUUID();
     const refreshToken = randomUUID();

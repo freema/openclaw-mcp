@@ -18,6 +18,8 @@ export interface ToolRegistrationDeps {
   registry: InstanceRegistry;
   serverName: string;
   serverVersion: string;
+  /** MCP transport session ID — used for task isolation in multi-client setups */
+  mcpSessionId?: string;
 }
 
 /**
@@ -49,6 +51,8 @@ export function createMcpServer(deps: ToolRegistrationDeps): Server {
 function registerTools(server: Server, deps: ToolRegistrationDeps): void {
   const { registry } = deps;
 
+  const { mcpSessionId } = deps;
+
   const toolHandlers = new Map<
     string,
     (
@@ -58,9 +62,15 @@ function registerTools(server: Server, deps: ToolRegistrationDeps): void {
     ['openclaw_chat', (input) => tools.handleOpenclawChat(registry, input)],
     ['openclaw_status', (input) => tools.handleOpenclawStatus(registry, input)],
     ['openclaw_chat_async', (input) => tools.handleOpenclawChatAsync(registry, input)],
-    ['openclaw_task_status', (input) => tools.handleOpenclawTaskStatus(registry, input)],
-    ['openclaw_task_list', (input) => tools.handleOpenclawTaskList(registry, input)],
-    ['openclaw_task_cancel', (input) => tools.handleOpenclawTaskCancel(registry, input)],
+    [
+      'openclaw_task_status',
+      (input) => tools.handleOpenclawTaskStatus(registry, input, mcpSessionId),
+    ],
+    ['openclaw_task_list', (input) => tools.handleOpenclawTaskList(registry, input, mcpSessionId)],
+    [
+      'openclaw_task_cancel',
+      (input) => tools.handleOpenclawTaskCancel(registry, input, mcpSessionId),
+    ],
     ['openclaw_instances', (input) => tools.handleOpenclawInstances(registry, input)],
   ]);
 

@@ -5,6 +5,7 @@
  * long-running operations to be started and polled for results.
  */
 
+import { randomUUID } from 'node:crypto';
 import { log } from '../../utils/logger.js';
 
 const MAX_TASKS = 1000;
@@ -38,7 +39,6 @@ export interface TaskCreateOptions {
 
 class TaskManager {
   private tasks: Map<string, Task> = new Map();
-  private taskCounter = 0;
   private cleanupInterval: ReturnType<typeof setInterval> | undefined;
 
   constructor() {
@@ -49,13 +49,10 @@ class TaskManager {
   }
 
   /**
-   * Generate unique task ID
+   * Generate cryptographically random task ID (non-guessable).
    */
   private generateId(): string {
-    this.taskCounter++;
-    const timestamp = Date.now().toString(36);
-    const counter = this.taskCounter.toString(36).padStart(4, '0');
-    return `task_${timestamp}_${counter}`;
+    return `task_${randomUUID()}`;
   }
 
   /**

@@ -210,4 +210,29 @@ describe('OpenClawAuthProvider', () => {
       'Invalid or expired token'
     );
   });
+
+  it('enforces auth code limit', async () => {
+    const provider = new OpenClawAuthProvider(config);
+    const client = (await provider.clientsStore.getClient('test-client'))!;
+
+    const mockRes = { redirect: () => {} };
+
+    // Generate 50 auth codes (MAX_AUTH_CODES)
+    for (let i = 0; i < 50; i++) {
+      await provider.authorize(
+        client,
+        { codeChallenge: `ch-${i}`, redirectUri: 'http://localhost/cb' },
+        mockRes as any
+      );
+    }
+
+    // 51st should fail
+    await expect(
+      provider.authorize(
+        client,
+        { codeChallenge: 'ch-overflow', redirectUri: 'http://localhost/cb' },
+        mockRes as any
+      )
+    ).rejects.toThrow('Too many pending authorization requests');
+  });
 });

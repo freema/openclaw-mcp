@@ -19,6 +19,48 @@ export class OpenClawClient {
     this.timeoutMs = timeoutMs;
   }
 
+  /**
+   * Read a response body with a size limit, aborting early if the limit is exceeded.
+   * This prevents a malicious server from consuming memory via chunked transfer encoding.
+   */
+  private async readBodyWithLimit(
+    response: globalThis.Response,
+    controller: AbortController
+  ): Promise<string> {
+    // Use streaming reader when available to abort early on oversized chunked responses
+    if (response.body && typeof response.body.getReader === 'function') {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let totalBytes = 0;
+      const chunks: string[] = [];
+
+      let done = false;
+      while (!done) {
+        const result = await reader.read();
+        done = result.done;
+        if (done) break;
+
+        totalBytes += result.value.byteLength;
+        if (totalBytes > MAX_RESPONSE_SIZE_BYTES) {
+          controller.abort();
+          throw new OpenClawApiError('Response exceeds maximum allowed size (10MB)', 413);
+        }
+
+        chunks.push(decoder.decode(result.value, { stream: true }));
+      }
+      // Flush the decoder
+      chunks.push(decoder.decode());
+      return chunks.join('');
+    }
+
+    // Fallback for environments where .body is not a ReadableStream
+    const text = await response.text();
+    if (text.length > MAX_RESPONSE_SIZE_BYTES) {
+      throw new OpenClawApiError('Response exceeds maximum allowed size (10MB)', 413);
+    }
+    return text;
+  }
+
   private buildHeaders(): Record<string, string> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -58,10 +100,9 @@ export class OpenClawClient {
         throw new OpenClawApiError('Response exceeds maximum allowed size (10MB)', 413);
       }
 
-      const text = await response.text();
-      if (text.length > MAX_RESPONSE_SIZE_BYTES) {
-        throw new OpenClawApiError('Response exceeds maximum allowed size (10MB)', 413);
-      }
+      // Stream the body incrementally to catch oversized chunked responses
+      // before loading the entire payload into memory
+      const text = await this.readBodyWithLimit(response, controller);
 
       return JSON.parse(text) as T;
     } catch (error) {

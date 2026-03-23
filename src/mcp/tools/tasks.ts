@@ -231,7 +231,8 @@ export async function handleOpenclawChatAsync(
 
 export async function handleOpenclawTaskStatus(
   _registry: InstanceRegistry,
-  input: unknown
+  input: unknown,
+  callerSessionId?: string
 ): Promise<ToolResponse> {
   if (!validateInputIsObject(input)) {
     return errorResponse('Invalid input: expected an object');
@@ -245,6 +246,11 @@ export async function handleOpenclawTaskStatus(
 
   const task = taskManager.get(task_id);
   if (!task) {
+    return errorResponse(`Task not found: ${task_id}`);
+  }
+
+  // Enforce session isolation: tasks are only visible to their owner session
+  if (callerSessionId && task.sessionId && task.sessionId !== callerSessionId) {
     return errorResponse(`Task not found: ${task_id}`);
   }
 
@@ -282,7 +288,8 @@ const VALID_TASK_STATUSES: readonly TaskStatus[] = [
 
 export async function handleOpenclawTaskList(
   _registry: InstanceRegistry,
-  input: unknown
+  input: unknown,
+  callerSessionId?: string
 ): Promise<ToolResponse> {
   if (!validateInputIsObject(input)) {
     return errorResponse('Invalid input: expected an object');
@@ -317,7 +324,13 @@ export async function handleOpenclawTaskList(
     instanceFilter = instResult.value;
   }
 
-  const tasks = taskManager.list({ status, sessionId: session_id, instanceId: instanceFilter });
+  // Enforce session isolation: always scope to caller's session when available
+  const effectiveSessionId = callerSessionId || session_id;
+  const tasks = taskManager.list({
+    status,
+    sessionId: effectiveSessionId,
+    instanceId: instanceFilter,
+  });
   const stats = taskManager.stats();
 
   const taskList = tasks.map((t) => ({
@@ -344,7 +357,8 @@ export async function handleOpenclawTaskList(
 
 export async function handleOpenclawTaskCancel(
   _registry: InstanceRegistry,
-  input: unknown
+  input: unknown,
+  callerSessionId?: string
 ): Promise<ToolResponse> {
   if (!validateInputIsObject(input)) {
     return errorResponse('Invalid input: expected an object');
@@ -358,6 +372,11 @@ export async function handleOpenclawTaskCancel(
 
   const task = taskManager.get(task_id);
   if (!task) {
+    return errorResponse(`Task not found: ${task_id}`);
+  }
+
+  // Enforce session isolation
+  if (callerSessionId && task.sessionId && task.sessionId !== callerSessionId) {
     return errorResponse(`Task not found: ${task_id}`);
   }
 

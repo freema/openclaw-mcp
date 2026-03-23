@@ -24,6 +24,7 @@ import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middlew
 
 import { OpenClawAuthProvider, type AuthProviderConfig } from '../auth/provider.js';
 import { log, logError } from '../utils/logger.js';
+import { RateLimiter } from '../utils/rate-limit.js';
 import { createMcpServer, type ToolRegistrationDeps } from './tools-registration.js';
 
 export interface SSEServerConfig {
@@ -152,6 +153,10 @@ export async function createSSEServer(
       ? new URL(config.issuerUrl)
       : new URL(`http://${config.host === '0.0.0.0' ? 'localhost' : config.host}:${config.port}`);
 
+    // Rate limit auth endpoints to prevent brute-force attacks
+    const authRateLimiter = new RateLimiter({ maxRequests: 20, windowMs: 60_000 });
+    app.use(['/authorize', '/token', '/register', '/revoke'], authRateLimiter.middleware());
+
     // Install OAuth endpoints: /authorize, /token, /register, /revoke
     // and .well-known discovery metadata
     app.use(
@@ -200,7 +205,7 @@ export async function createSSEServer(
     '/sse',
     ...withAuth(async (req: Request, res: Response) => {
       const transport = new SSEServerTransport('/messages', res as unknown as ServerResponse);
-      const server = createMcpServer(deps);
+      const server = createMcpServer({ ...deps, mcpSessionId: transport.sessionId });
 
       const sessionId = transport.sessionId;
       sseSessions.set(sessionId, { transport, server });
@@ -270,8 +275,11 @@ export async function createSSEServer(
     }
 
     // New session (initialization request)
+    const streamableSessionId = randomUUID();
+    const server = createMcpServer({ ...deps, mcpSessionId: streamableSessionId });
+
     const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
+      sessionIdGenerator: () => streamableSessionId,
       onsessioninitialized: (newSessionId) => {
         streamableSessions.set(newSessionId, { transport, server });
         log(`Streamable session initialized: ${newSessionId}`);
@@ -285,8 +293,6 @@ export async function createSSEServer(
         log(`Streamable session closed: ${sid}`);
       }
     };
-
-    const server = createMcpServer(deps);
 
     try {
       await server.connect(transport);

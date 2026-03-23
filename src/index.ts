@@ -62,10 +62,12 @@ async function main() {
       };
       log(`OAuth client ID: ${args.clientId}`);
       if (!args.redirectUris || args.redirectUris.length === 0) {
-        log(
-          'WARNING: MCP_REDIRECT_URIS not set — any redirect_uri will be accepted. ' +
-            'Set MCP_REDIRECT_URIS for production.'
+        logError(
+          'AUTH_ENABLED=true but MCP_REDIRECT_URIS is not set. ' +
+            'You must configure allowed redirect URIs in production to prevent open redirect attacks. ' +
+            'Example: MCP_REDIRECT_URIS=https://claude.ai/oauth/callback'
         );
+        process.exit(1);
       }
     } else if (args.authEnabled && !args.clientId) {
       logError('AUTH_ENABLED=true but MCP_CLIENT_ID is not set. Refusing to start without auth.');
