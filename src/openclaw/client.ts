@@ -1,4 +1,5 @@
 import { OpenClawConnectionError, OpenClawApiError } from '../utils/errors.js';
+import { logDebug } from '../utils/logger.js';
 import type {
   OpenClawHealthResponse,
   OpenClawChatResponse,
@@ -7,16 +8,24 @@ import type {
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+const MAX_DEBUG_BODY_LENGTH = 4096;
 
 export class OpenClawClient {
   private baseUrl: string;
   private gatewayToken: string | undefined;
   private timeoutMs: number;
+  private model: string;
 
-  constructor(baseUrl: string, gatewayToken?: string, timeoutMs: number = DEFAULT_TIMEOUT_MS) {
+  constructor(
+    baseUrl: string,
+    gatewayToken?: string,
+    timeoutMs: number = DEFAULT_TIMEOUT_MS,
+    model: string = 'openclaw'
+  ) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.gatewayToken = gatewayToken;
     this.timeoutMs = timeoutMs;
+    this.model = model;
   }
 
   private buildHeaders(): Record<string, string> {
@@ -29,8 +38,18 @@ export class OpenClawClient {
     return headers;
   }
 
+  private truncateForLog(value: string): string {
+    if (value.length <= MAX_DEBUG_BODY_LENGTH) return value;
+    return value.slice(0, MAX_DEBUG_BODY_LENGTH) + `... (truncated, ${value.length} chars total)`;
+  }
+
   private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.baseUrl}${path}`;
+
+    logDebug(`Request: ${options.method ?? 'GET'} ${url}`);
+    if (options.body) {
+      logDebug(`Request body: ${this.truncateForLog(options.body as string)}`);
+    }
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -46,11 +65,15 @@ export class OpenClawClient {
       });
 
       if (!response.ok) {
+        const errorBody = await response.text();
+        logDebug(`Response error (${response.status}): ${this.truncateForLog(errorBody)}`);
         throw new OpenClawApiError(
           `API request failed: ${response.status} ${response.statusText}`,
           response.status
         );
       }
+
+      logDebug(`Response: ${response.status} ${response.statusText}`);
 
       // Validate response size before consuming the body
       const contentLength = response.headers.get('content-length');
@@ -130,7 +153,7 @@ export class OpenClawClient {
    */
   async chat(message: string, sessionId?: string): Promise<OpenClawChatResponse> {
     const body: Record<string, unknown> = {
-      model: 'claude-opus-4-5',
+      model: this.model,
       messages: [{ role: 'user', content: message }],
       max_tokens: 4096,
     };

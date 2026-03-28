@@ -91,9 +91,11 @@ openclaw-mcp --help
 Options:
   --openclaw-url, -u  OpenClaw gateway URL     [default: "http://127.0.0.1:18789"]
   --gateway-token     Bearer token for gateway [default: none]
+  --model, -m         Model name for chat      [default: "openclaw"]
   --transport, -t     Transport mode           [choices: "stdio", "sse"] [default: "stdio"]
   --port, -p          Port for SSE server      [default: 3000]
   --host              Host for SSE server      [default: "0.0.0.0"]
+  --debug             Enable debug logging     [default: false]
   --auth              Enable OAuth             [default: false]
   --client-id         MCP OAuth client ID      [env: MCP_CLIENT_ID]
   --client-secret     MCP OAuth client secret  [env: MCP_CLIENT_SECRET]

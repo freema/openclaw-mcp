@@ -11,6 +11,7 @@ All configuration can be done via environment variables. Copy `.env.example` to 
 | `OPENCLAW_URL`           | OpenClaw gateway URL                    | `http://127.0.0.1:18789` |
 | `OPENCLAW_GATEWAY_TOKEN` | Bearer token for gateway authentication | (none)                   |
 | `OPENCLAW_TIMEOUT_MS`    | Request timeout in milliseconds         | `120000` (2 min)         |
+| `OPENCLAW_MODEL`         | Model name for chat completions         | `openclaw`               |
 
 ### Multi-Instance Mode
 
@@ -135,7 +136,7 @@ The server uses the MCP SDK's built-in OAuth 2.1 server with authorization code 
 
 **Client ID validation rules:**
 
-- 3–64 characters
+- 3-64 characters
 - Alphanumeric, dashes, underscores only
 - Must start with a letter or digit
 

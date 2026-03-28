@@ -36,12 +36,23 @@ The MCP server logs operational events to **stderr** using the `[openclaw-mcp]` 
 - Invalid client configuration (missing secrets, bad client ID format)
 - Session errors
 
-### What Is NOT Logged
+### What Is NOT Logged (Info/Error levels)
 
 - **Message content** — user messages and OpenClaw responses are never logged
 - **Authentication tokens** — Bearer tokens, client secrets, gateway tokens
 - **Request/response bodies** — only error messages, not full payloads
 - **User-identifiable information** — no IPs, user agents, or personal data
+
+### Debug Level (`DEBUG=true`)
+
+> **Warning:** Debug mode is a diagnostic tool. It logs request and response payloads which may contain user message content. Do not enable in production under normal operation — use it only for active troubleshooting, then disable it.
+
+When debug logging is enabled, the following **are** logged for troubleshooting:
+
+- **Request bodies** — outgoing payloads sent to the gateway (truncated to 4096 chars)
+- **Error response bodies** — full error responses from the gateway (truncated to 4096 chars)
+
+Credentials are still redacted by the sanitization layer. Headers (including Authorization) are never logged, even in debug mode.
 
 ## Sensitive Data Redaction
 
@@ -99,4 +110,4 @@ DEBUG=true        # Explicit debug flag
 NODE_ENV=development  # Development mode
 ```
 
-Debug logs include additional operational detail but still never log message content or credentials.
+Debug logs include request/response bodies for troubleshooting (truncated to 4096 chars). Credentials are still redacted, and headers (including Authorization) are never logged.

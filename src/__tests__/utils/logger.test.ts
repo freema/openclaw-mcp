@@ -46,6 +46,47 @@ describe('logger', () => {
     });
   });
 
+  describe('logDebug', () => {
+    it('does not log when debug is disabled (default)', async () => {
+      const { logDebug } = await loadLogger();
+      logDebug('should not appear');
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
+
+    it('logs with DEBUG prefix when enabled', async () => {
+      const { logDebug, setDebugEnabled } = await loadLogger();
+      setDebugEnabled(true);
+      logDebug('test message');
+      expect(consoleSpy).toHaveBeenCalledWith('[openclaw-mcp] DEBUG: test message');
+      setDebugEnabled(false);
+    });
+
+    it('sanitizes sensitive data in debug messages', async () => {
+      const { logDebug, setDebugEnabled } = await loadLogger();
+      setDebugEnabled(true);
+      logDebug('Auth: Bearer eyJhbGciOiJIUzI1NiJ9.secret');
+      const output = consoleSpy.mock.calls[0][0] as string;
+      expect(output).toContain('[REDACTED]');
+      expect(output).not.toContain('eyJhbGciOiJIUzI1NiJ9');
+      setDebugEnabled(false);
+    });
+  });
+
+  describe('setDebugEnabled', () => {
+    it('can toggle debug on and off', async () => {
+      const { logDebug, setDebugEnabled } = await loadLogger();
+
+      setDebugEnabled(true);
+      logDebug('visible');
+      expect(consoleSpy).toHaveBeenCalledTimes(1);
+
+      consoleSpy.mockClear();
+      setDebugEnabled(false);
+      logDebug('invisible');
+      expect(consoleSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('sanitization', () => {
     it('redacts Bearer tokens', async () => {
       const { log } = await loadLogger();

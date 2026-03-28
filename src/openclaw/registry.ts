@@ -14,7 +14,7 @@ export class InstanceRegistry {
   private instances: Map<string, { config: InstanceConfig; client: OpenClawClient }> = new Map();
   private defaultName: string;
 
-  constructor(configs: InstanceConfig[]) {
+  constructor(configs: InstanceConfig[], model?: string) {
     if (configs.length === 0) {
       throw new Error('At least one OpenClaw instance must be configured');
     }
@@ -58,7 +58,7 @@ export class InstanceRegistry {
         explicitDefault = config.name;
       }
 
-      const client = new OpenClawClient(config.url, config.token, config.timeout);
+      const client = new OpenClawClient(config.url, config.token, config.timeout, model);
       this.instances.set(config.name, { config, client });
     }
 

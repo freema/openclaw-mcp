@@ -1,3 +1,5 @@
+let debugEnabled = false;
+
 /**
  * Patterns that may indicate sensitive data in log messages.
  * These are redacted to prevent credential leaks in logs.
@@ -20,6 +22,16 @@ function sanitizeLogMessage(message: string): string {
 
 export function log(message: string): void {
   console.error(`[openclaw-mcp] ${sanitizeLogMessage(message)}`);
+}
+
+export function setDebugEnabled(enabled: boolean): void {
+  debugEnabled = enabled;
+}
+
+export function logDebug(message: string): void {
+  if (debugEnabled) {
+    console.error(`[openclaw-mcp] DEBUG: ${sanitizeLogMessage(message)}`);
+  }
 }
 
 export function logError(message: string, error?: unknown): void {

@@ -1,15 +1,17 @@
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import { DEFAULT_OPENCLAW_URL } from './config/constants.js';
+import { DEFAULT_OPENCLAW_URL, DEFAULT_MODEL } from './config/constants.js';
 import type { InstanceConfig } from './openclaw/types.js';
 
 export interface CliArgs {
   openclawUrl: string;
   gatewayToken: string | undefined;
+  model: string;
   transport: 'stdio' | 'sse';
   port: number;
   host: string;
   timeout: number;
+  debug: boolean;
   authEnabled: boolean;
   clientId: string | undefined;
   clientSecret: string | undefined;
@@ -31,6 +33,12 @@ export function parseArguments(version: string): CliArgs {
       type: 'string',
       description: 'Bearer token for OpenClaw gateway authentication',
       default: process.env.OPENCLAW_GATEWAY_TOKEN || undefined,
+    })
+    .option('model', {
+      alias: 'm',
+      type: 'string',
+      description: 'Model name for chat completions',
+      default: process.env.OPENCLAW_MODEL || DEFAULT_MODEL,
     })
     .option('transport', {
       alias: 't',
@@ -54,6 +62,11 @@ export function parseArguments(version: string): CliArgs {
       type: 'number',
       description: 'Request timeout in milliseconds',
       default: parseInt(process.env.OPENCLAW_TIMEOUT_MS || '120000', 10),
+    })
+    .option('debug', {
+      type: 'boolean',
+      description: 'Enable debug logging',
+      default: process.env.DEBUG === 'true' || process.env.NODE_ENV === 'development',
     })
     .option('auth', {
       type: 'boolean',
@@ -131,10 +144,12 @@ export function parseArguments(version: string): CliArgs {
   return {
     openclawUrl: argv['openclaw-url'] as string,
     gatewayToken: argv['gateway-token'] as string | undefined,
+    model: argv.model as string,
     transport: argv.transport as 'stdio' | 'sse',
     port: argv.port,
     host: argv.host,
     timeout: argv.timeout,
+    debug: argv.debug,
     authEnabled: argv.auth,
     clientId: argv['client-id'] as string | undefined,
     clientSecret: argv['client-secret'] as string | undefined,
