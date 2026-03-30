@@ -24,6 +24,10 @@ Hey! I created this MCP server because I didn't want to rely solely on messaging
 
 Think of it as an AI assistant orchestrating another AI assistant. Pretty cool, right?
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/freema-openclaw-mcp).
+
 ## Quick Start
 
 ### Docker (Recommended)
