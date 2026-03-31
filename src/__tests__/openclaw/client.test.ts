@@ -128,9 +128,36 @@ describe('OpenClawClient', () => {
       expect(callArgs[1].method).toBe('POST');
 
       const body = JSON.parse(callArgs[1].body);
-      expect(body.model).toBe('claude-opus-4-5');
+      expect(body.model).toBe('openclaw');
       expect(body.messages).toEqual([{ role: 'user', content: 'Hi' }]);
       expect(body.max_tokens).toBe(4096);
+    });
+
+    it('uses custom model from constructor', async () => {
+      const customClient = new OpenClawClient(
+        'https://openclaw.example.com',
+        'test-token',
+        120_000,
+        'openclaw/my-agent'
+      );
+      const openaiResponse = {
+        id: 'chatcmpl-custom',
+        object: 'chat.completion',
+        created: 1234567890,
+        model: 'openclaw/my-agent',
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content: 'Hello!' },
+            finish_reason: 'stop',
+          },
+        ],
+      };
+      mockJsonResponse(openaiResponse);
+
+      await customClient.chat('Hi');
+      const body = JSON.parse(fetchSpy.mock.calls[0][1].body);
+      expect(body.model).toBe('openclaw/my-agent');
     });
 
     it('returns empty string when no choices in response', async () => {

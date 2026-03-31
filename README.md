@@ -47,6 +47,7 @@ services:
     environment:
       - OPENCLAW_URL=http://host.docker.internal:18789
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
+      - OPENCLAW_MODEL=openclaw
       - AUTH_ENABLED=true
       - MCP_CLIENT_ID=openclaw
       - MCP_CLIENT_SECRET=${MCP_CLIENT_SECRET}
@@ -88,6 +89,7 @@ Add to your Claude Desktop config:
       "env": {
         "OPENCLAW_URL": "http://127.0.0.1:18789",
         "OPENCLAW_GATEWAY_TOKEN": "your-gateway-token",
+        "OPENCLAW_MODEL": "openclaw",
         "OPENCLAW_TIMEOUT_MS": "300000"
       }
     }

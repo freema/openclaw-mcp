@@ -17,6 +17,8 @@ services:
     environment:
       - OPENCLAW_URL=${OPENCLAW_URL:-http://host.docker.internal:18789}
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
+      - OPENCLAW_MODEL=${OPENCLAW_MODEL:-openclaw}
+      - DEBUG=${DEBUG:-false}
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
       - MCP_CLIENT_ID=${MCP_CLIENT_ID:-openclaw}
       - MCP_CLIENT_SECRET=${MCP_CLIENT_SECRET:-}
@@ -169,7 +171,23 @@ The MCP bridge communicates with the OpenClaw gateway via its OpenAI-compatible 
 
 Without this, the MCP bridge will receive `405 Method Not Allowed` from the gateway.
 
+## Bridge / Gateway Compatibility
+
+| MCP Bridge | Gateway | Result |
+|------------|---------|--------|
+| ≤ 1.2.2 | ≥ 2026.3.24 | `400 Bad Request` — bridge sends `model: "claude-opus-4-5"`, gateway rejects it |
+| ≥ 1.3.0 | ≥ 2026.3.24 | Works — bridge defaults to `model: "openclaw"` |
+| ≥ 1.3.0 | older | Works — set `OPENCLAW_MODEL` to whatever the older gateway expects |
+
+If you're running a non-standard gateway setup with custom agent routing, set `OPENCLAW_MODEL=openclaw/<agentId>` to match your configuration.
+
 ## Troubleshooting
+
+### `400 Bad Request` from gateway on `openclaw_chat`
+
+Gateway versions 2026.3.24+ require `model: "openclaw"` (or `"openclaw/<agentId>"`). The MCP bridge defaults to `"openclaw"` since v1.3.0. If you're using an older bridge version, upgrade or set `OPENCLAW_MODEL=openclaw`. If you need custom model routing, set `OPENCLAW_MODEL` to the value your gateway expects.
+
+To diagnose, enable debug logging (`DEBUG=true`) which logs the outgoing request body and gateway error responses.
 
 ### `405 Method Not Allowed` from gateway
 
