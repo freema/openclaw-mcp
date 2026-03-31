@@ -1,5 +1,5 @@
 import { OpenClawConnectionError, OpenClawApiError } from '../utils/errors.js';
-import { logDebug } from '../utils/logger.js';
+import { logDebug, isDebugEnabled } from '../utils/logger.js';
 import type {
   OpenClawHealthResponse,
   OpenClawChatResponse,
@@ -46,9 +46,9 @@ export class OpenClawClient {
   private async request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.baseUrl}${path}`;
 
-    logDebug(`Request: ${options.method ?? 'GET'} ${url}`);
+    logDebug(() => `Request: ${options.method ?? 'GET'} ${url}`);
     if (options.body) {
-      logDebug(`Request body: ${this.truncateForLog(options.body as string)}`);
+      logDebug(() => `Request body: ${this.truncateForLog(options.body as string)}`);
     }
 
     const controller = new AbortController();
@@ -65,15 +65,24 @@ export class OpenClawClient {
       });
 
       if (!response.ok) {
-        const errorBody = await response.text();
-        logDebug(`Response error (${response.status}): ${this.truncateForLog(errorBody)}`);
+        if (isDebugEnabled()) {
+          const contentLength = response.headers.get('content-length');
+          if (!contentLength || parseInt(contentLength, 10) <= MAX_RESPONSE_SIZE_BYTES) {
+            const errorBody = await response.text();
+            if (errorBody.length <= MAX_RESPONSE_SIZE_BYTES) {
+              logDebug(
+                () => `Response error (${response.status}): ${this.truncateForLog(errorBody)}`
+              );
+            }
+          }
+        }
         throw new OpenClawApiError(
           `API request failed: ${response.status} ${response.statusText}`,
           response.status
         );
       }
 
-      logDebug(`Response: ${response.status} ${response.statusText}`);
+      logDebug(() => `Response: ${response.status} ${response.statusText}`);
 
       // Validate response size before consuming the body
       const contentLength = response.headers.get('content-length');

@@ -185,7 +185,7 @@ If you're running a non-standard gateway setup with custom agent routing, set `O
 
 ### `400 Bad Request` from gateway on `openclaw_chat`
 
-Gateway versions 2026.3.24+ require `model: "openclaw"` (or `"openclaw/<agentId>"`). The MCP bridge defaults to `"openclaw"` since v1.3.1. If you're using an older bridge version, upgrade or set `OPENCLAW_MODEL=openclaw`. If you need custom model routing, set `OPENCLAW_MODEL` to the value your gateway expects.
+Gateway versions 2026.3.24+ require `model: "openclaw"` (or `"openclaw/<agentId>"`). The MCP bridge defaults to `"openclaw"` since v1.3.0. If you're using an older bridge version, upgrade or set `OPENCLAW_MODEL=openclaw`. If you need custom model routing, set `OPENCLAW_MODEL` to the value your gateway expects.
 
 To diagnose, enable debug logging (`DEBUG=true`) which logs the outgoing request body and gateway error responses.
 

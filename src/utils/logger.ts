@@ -28,10 +28,16 @@ export function setDebugEnabled(enabled: boolean): void {
   debugEnabled = enabled;
 }
 
-export function logDebug(message: string): void {
-  if (debugEnabled) {
-    console.error(`[openclaw-mcp] DEBUG: ${sanitizeLogMessage(message)}`);
+export function isDebugEnabled(): boolean {
+  return debugEnabled;
+}
+
+export function logDebug(messageOrFactory: string | (() => string)): void {
+  if (!debugEnabled) {
+    return;
   }
+  const message = typeof messageOrFactory === 'function' ? messageOrFactory() : messageOrFactory;
+  console.error(`[openclaw-mcp] DEBUG: ${sanitizeLogMessage(message)}`);
 }
 
 export function logError(message: string, error?: unknown): void {

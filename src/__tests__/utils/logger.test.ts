@@ -70,9 +70,24 @@ describe('logger', () => {
       expect(output).not.toContain('eyJhbGciOiJIUzI1NiJ9');
       setDebugEnabled(false);
     });
+
+    it('accepts a callback and only calls it when debug is enabled', async () => {
+      const { logDebug, setDebugEnabled } = await loadLogger();
+      const factory = vi.fn(() => 'lazy message');
+
+      logDebug(factory);
+      expect(factory).not.toHaveBeenCalled();
+      expect(consoleSpy).not.toHaveBeenCalled();
+
+      setDebugEnabled(true);
+      logDebug(factory);
+      expect(factory).toHaveBeenCalledTimes(1);
+      expect(consoleSpy).toHaveBeenCalledWith('[openclaw-mcp] DEBUG: lazy message');
+      setDebugEnabled(false);
+    });
   });
 
-  describe('setDebugEnabled', () => {
+  describe('setDebugEnabled / isDebugEnabled', () => {
     it('can toggle debug on and off', async () => {
       const { logDebug, setDebugEnabled } = await loadLogger();
 
@@ -84,6 +99,16 @@ describe('logger', () => {
       setDebugEnabled(false);
       logDebug('invisible');
       expect(consoleSpy).not.toHaveBeenCalled();
+    });
+
+    it('isDebugEnabled returns current state', async () => {
+      const { isDebugEnabled, setDebugEnabled } = await loadLogger();
+
+      expect(isDebugEnabled()).toBe(false);
+      setDebugEnabled(true);
+      expect(isDebugEnabled()).toBe(true);
+      setDebugEnabled(false);
+      expect(isDebugEnabled()).toBe(false);
     });
   });
 

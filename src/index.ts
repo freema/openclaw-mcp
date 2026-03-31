@@ -13,6 +13,14 @@ const args = parseArguments(SERVER_VERSION);
 // Enable debug logging if requested
 setDebugEnabled(args.debug);
 
+// Validate model name
+const trimmedModel = args.model.trim();
+if (!trimmedModel) {
+  logError('OPENCLAW_MODEL / --model must be a non-empty string. Default is "openclaw".');
+  process.exit(1);
+}
+args.model = trimmedModel;
+
 // Create instance registry (single or multi-instance)
 const registry = new InstanceRegistry(args.instances, args.model);
 
