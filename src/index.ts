@@ -75,6 +75,7 @@ async function main() {
         clientId: args.clientId,
         clientSecret: args.clientSecret,
         redirectUris: args.redirectUris,
+        allowDynamicRegistration: args.allowDcr,
       };
       log(`OAuth client ID: ${args.clientId}`);
       if (!args.redirectUris || args.redirectUris.length === 0) {
@@ -82,6 +83,34 @@ async function main() {
           'WARNING: MCP_REDIRECT_URIS not set — any redirect_uri will be accepted. ' +
             'Set MCP_REDIRECT_URIS for production.'
         );
+      }
+      if (args.allowDcr) {
+        // DCR + auto-approve = any reachable client can self-register and obtain
+        // a bearer token without user interaction. Refuse to bind non-loopback
+        // hosts unless the operator explicitly opts in via the escape hatch.
+        const isLoopback =
+          args.host === '127.0.0.1' || args.host === 'localhost' || args.host === '::1';
+        const publicOptIn = process.env.MCP_DANGEROUSLY_ALLOW_DCR_PUBLIC === 'true';
+        if (!isLoopback && !publicOptIn) {
+          logError(
+            `MCP_DANGEROUSLY_ALLOW_DCR=true is set but HOST="${args.host}" is not loopback. ` +
+              'Dynamic Client Registration combined with a publicly reachable bind allows ' +
+              'anyone on the network to obtain a token. Bind to 127.0.0.1, or set ' +
+              'MCP_DANGEROUSLY_ALLOW_DCR_PUBLIC=true to override. Refusing to start.'
+          );
+          process.exit(1);
+        }
+        log(
+          'WARNING: MCP_DANGEROUSLY_ALLOW_DCR is enabled — OAuth Dynamic Client Registration is open. ' +
+            'Any client that can reach this server may self-register and obtain tokens. ' +
+            'Use for local development only.'
+        );
+        if (publicOptIn) {
+          log(
+            'WARNING: MCP_DANGEROUSLY_ALLOW_DCR_PUBLIC=true — DCR is exposed on a non-loopback bind. ' +
+              'You have explicitly accepted the risk.'
+          );
+        }
       }
     } else if (args.authEnabled && !args.clientId) {
       logError('AUTH_ENABLED=true but MCP_CLIENT_ID is not set. Refusing to start without auth.');

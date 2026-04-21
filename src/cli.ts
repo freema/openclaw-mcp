@@ -17,6 +17,7 @@ export interface CliArgs {
   clientSecret: string | undefined;
   issuerUrl: string | undefined;
   redirectUris: string[] | undefined;
+  allowDcr: boolean;
   instances: InstanceConfig[];
 }
 
@@ -93,6 +94,12 @@ export function parseArguments(version: string): CliArgs {
       description: 'Allowed OAuth redirect URIs (comma-separated)',
       default: process.env.MCP_REDIRECT_URIS || undefined,
     })
+    .option('allow-dcr', {
+      type: 'boolean',
+      description:
+        'Allow OAuth Dynamic Client Registration (Cursor/Windsurf compatibility, dev-only)',
+      default: process.env.MCP_DANGEROUSLY_ALLOW_DCR === 'true',
+    })
     .help()
     .parseSync();
 
@@ -160,6 +167,7 @@ export function parseArguments(version: string): CliArgs {
           .map((s) => s.trim())
           .filter(Boolean)
       : undefined,
+    allowDcr: argv['allow-dcr'] as boolean,
     instances,
   };
 }
