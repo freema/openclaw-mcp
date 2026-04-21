@@ -133,6 +133,8 @@ The server uses the MCP SDK's built-in OAuth 2.1 server with authorization code 
 | `MCP_CLIENT_SECRET` | OAuth client secret                                         | When auth enabled          |
 | `MCP_ISSUER_URL`    | OAuth issuer URL override (e.g., `https://mcp.example.com`) | When behind HTTPS proxy    |
 | `MCP_REDIRECT_URIS` | Allowed redirect URIs (comma-separated)                     | Recommended for production |
+| `MCP_DANGEROUSLY_ALLOW_DCR`        | Enable Dynamic Client Registration (`true`/`false`)         | Dev only (see below)       |
+| `MCP_DANGEROUSLY_ALLOW_DCR_PUBLIC` | Escape hatch to allow DCR on non-loopback binds             | Never, unless you mean it  |
 
 **Client ID validation rules:**
 
@@ -153,4 +155,14 @@ When auth is enabled, the server exposes these OAuth 2.1 endpoints:
 - `POST /token` — Token exchange (requires client_secret)
 - `POST /revoke` — Token revocation
 
-Dynamic client registration is **disabled** — only the pre-configured client (from `MCP_CLIENT_ID` + `MCP_CLIENT_SECRET`) can authenticate. This prevents anyone who knows the server URL from self-registering and bypassing auth.
+Dynamic client registration is **disabled by default** — only the pre-configured client (from `MCP_CLIENT_ID` + `MCP_CLIENT_SECRET`) can authenticate. This prevents anyone who knows the server URL from self-registering and bypassing auth.
+
+#### Cursor / Windsurf compatibility (dev only)
+
+Cursor and Windsurf only support MCP servers that expose OAuth 2.0 Dynamic Client Registration (RFC 7591). To let them connect, set `MCP_DANGEROUSLY_ALLOW_DCR=true`. The server will then advertise a `/register` endpoint and accept ad-hoc client registrations (kept in an in-memory FIFO store, capped at 100 entries).
+
+`MCP_CLIENT_ID` and `MCP_CLIENT_SECRET` are still required — DCR augments the pre-configured client, it does not replace it. If you are only running Cursor locally you can use any valid values for them; they simply remain unused.
+
+**This is dev-only.** With DCR enabled alongside the server's auto-approve authorization flow, any client that can reach the server can register itself and obtain a token. To prevent accidental exposure the server refuses to start when `MCP_DANGEROUSLY_ALLOW_DCR=true` and `HOST` is not loopback (`127.0.0.1`, `localhost`, or `::1`). If you genuinely need DCR on a non-loopback bind (e.g., inside a trusted private network), also set `MCP_DANGEROUSLY_ALLOW_DCR_PUBLIC=true`.
+
+For production with Claude.ai, keep DCR disabled and use the pre-configured `MCP_CLIENT_ID` / `MCP_CLIENT_SECRET`.

@@ -6,9 +6,10 @@
  * Claude.ai and MCP Inspector can use to authenticate.
  *
  * Pre-configured client credentials come from MCP_CLIENT_ID + MCP_CLIENT_SECRET
- * env vars. Dynamic client registration is disabled — only the pre-configured
- * client can authenticate. The pre-configured client accepts any redirect_uri
- * (it's added to the allowlist on first use by the SDK authorize handler).
+ * env vars. By default, dynamic client registration (DCR) is disabled — only
+ * the pre-configured client can authenticate. Setting MCP_DANGEROUSLY_ALLOW_DCR=true
+ * opts into DCR so clients like Cursor and Windsurf, which require DCR, can
+ * connect. That mode is intended for local development only.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -38,6 +39,13 @@ export interface AuthProviderConfig {
   clientSecret?: string;
   /** Allowed redirect URIs. When empty/undefined, any redirect_uri is accepted (with a warning). */
   redirectUris?: string[];
+  /**
+   * Enable OAuth 2.0 Dynamic Client Registration (RFC 7591).
+   * Required for clients like Cursor / Windsurf. Dev-only — auto-registered
+   * clients combined with auto-approve mean anyone who can reach the server
+   * can obtain a token.
+   */
+  allowDynamicRegistration?: boolean;
 }
 
 // --- Clients Store ---
@@ -74,11 +82,32 @@ const ALLOW_ANY_REDIRECT: string[] = new Proxy([] as string[], {
 });
 
 /**
- * In-memory clients store. Only the pre-configured client from env vars is allowed.
- * Dynamic client registration is intentionally disabled to prevent unauthorized access.
+ * In-memory clients store.
+ *
+ * Always serves the pre-configured client from env vars. When
+ * `allowDynamicRegistration` is true, the `registerClient` method is
+ * exposed so the SDK advertises `/register` in OAuth metadata and accepts
+ * RFC 7591 dynamic registration requests (kept in memory until restart).
  */
+/**
+ * Cap on dynamically registered clients to avoid unbounded memory growth when
+ * DCR is left enabled in a long-running dev session. FIFO eviction keeps the
+ * store bounded; the MCP SDK's per-IP rate limit (20/hr) is the first line of
+ * defense, this cap is a backstop.
+ */
+const MAX_DYNAMIC_CLIENTS = 100;
+
 export class OpenClawClientsStore implements OAuthRegisteredClientsStore {
   private client: OAuthClientInformationFull | undefined;
+  private dynamicClients = new Map<string, OAuthClientInformationFull>();
+
+  // Assigned conditionally in the constructor. The MCP SDK probes
+  // `clientsStore.registerClient` at router-setup time and only advertises
+  // `/register` when the property is defined, so we must NOT define a no-op
+  // method on the prototype — it has to be instance-level and gated on config.
+  registerClient?: (
+    client: OAuthClientInformationFull
+  ) => OAuthClientInformationFull | Promise<OAuthClientInformationFull>;
 
   constructor(config: AuthProviderConfig) {
     if (config.clientId && config.clientSecret) {
@@ -98,18 +127,29 @@ export class OpenClawClientsStore implements OAuthRegisteredClientsStore {
         client_id_issued_at: Math.floor(Date.now() / 1000),
       };
     }
+
+    if (config.allowDynamicRegistration) {
+      this.registerClient = (client) => {
+        // FIFO eviction when the cap is reached. Map iteration order is
+        // insertion order, so the first key is the oldest entry.
+        if (this.dynamicClients.size >= MAX_DYNAMIC_CLIENTS) {
+          const oldestKey = this.dynamicClients.keys().next().value;
+          if (oldestKey !== undefined) {
+            this.dynamicClients.delete(oldestKey);
+          }
+        }
+        this.dynamicClients.set(client.client_id, client);
+        return client;
+      };
+    }
   }
 
   async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
     if (this.client && this.client.client_id === clientId) {
       return this.client;
     }
-    return undefined;
+    return this.dynamicClients.get(clientId);
   }
-
-  // No registerClient — dynamic client registration is intentionally disabled.
-  // Only the pre-configured client from MCP_CLIENT_ID + MCP_CLIENT_SECRET can authenticate.
-  // This prevents anyone who knows the server URL from self-registering and bypassing auth.
 }
 
 // --- Auth Provider ---
@@ -309,10 +349,21 @@ export class OpenClawAuthProvider implements OAuthServerProvider {
   }
 
   async revokeToken(
-    _client: OAuthClientInformationFull,
+    client: OAuthClientInformationFull,
     request: OAuthTokenRevocationRequest
   ): Promise<void> {
-    this.tokens.delete(request.token);
-    this.refreshTokens.delete(request.token);
+    // RFC 7009: the token is only revoked if it was issued to the requesting
+    // client. Without this check, any authenticated client could revoke any
+    // other client's tokens — which becomes exploitable once DCR lets strangers
+    // obtain a valid client_id/secret pair.
+    const tokenData = this.tokens.get(request.token);
+    if (tokenData && tokenData.clientId === client.client_id) {
+      this.tokens.delete(request.token);
+    }
+
+    const refreshData = this.refreshTokens.get(request.token);
+    if (refreshData && refreshData.clientId === client.client_id) {
+      this.refreshTokens.delete(request.token);
+    }
   }
 }
