@@ -1,0 +1,44 @@
+name: Publish to MCP Registry
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Sync server.json version with release tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION=$(node -p "require('./package.json').version")
+          fi
+          echo "Publishing version: $VERSION"
+          node -e "
+            const fs = require('fs');
+            const s = JSON.parse(fs.readFileSync('server.json', 'utf8'));
+            s.version = '$VERSION';
+            for (const p of s.packages || []) p.version = '$VERSION';
+            fs.writeFileSync('server.json', JSON.stringify(s, null, 2) + '\n');
+          "
+          cat server.json
+
+      - name: Install mcp-publisher
+        run: |
+          curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
+            | tar xz mcp-publisher
+          chmod +x mcp-publisher
+
+      - name: Login to MCP Registry (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to MCP Registry
+        run: ./mcp-publisher publish
