@@ -48,7 +48,6 @@
     {
       "registryType": "oci",
       "identifier": "ghcr.io/freema/openclaw-mcp:1.4.0",
-      "version": "1.4.0",
       "transport": {
         "type": "stdio"
       },
