@@ -47,8 +47,7 @@
     },
     {
       "registryType": "oci",
-      "registryBaseUrl": "https://ghcr.io",
-      "identifier": "freema/openclaw-mcp",
+      "identifier": "ghcr.io/freema/openclaw-mcp:1.4.0",
       "version": "1.4.0",
       "transport": {
         "type": "stdio"
@@ -73,12 +72,6 @@
           "isRequired": false
         }
       ]
-    }
-  ],
-  "remotes": [
-    {
-      "type": "sse",
-      "url": "https://openclaw-mcp.cloud/sse"
     }
   ]
 }

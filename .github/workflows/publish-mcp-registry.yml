@@ -26,7 +26,12 @@ jobs:
             const fs = require('fs');
             const s = JSON.parse(fs.readFileSync('server.json', 'utf8'));
             s.version = '$VERSION';
-            for (const p of s.packages || []) p.version = '$VERSION';
+            for (const p of s.packages || []) {
+              p.version = '$VERSION';
+              if (p.registryType === 'oci' && typeof p.identifier === 'string') {
+                p.identifier = p.identifier.replace(/:[^:/]+\$/, ':$VERSION');
+              }
+            }
             fs.writeFileSync('server.json', JSON.stringify(s, null, 2) + '\n');
           "
           cat server.json
