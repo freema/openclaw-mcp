@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.freema/openclaw-mcp",
-  "description": "Model Context Protocol (MCP) server for OpenClaw AI assistant integration — bridges Claude Desktop and Claude.ai with self-hosted OpenClaw via OAuth 2.1.",
+  "description": "MCP server bridging Claude.ai/Desktop with self-hosted OpenClaw via OAuth 2.1.",
   "status": "active",
   "repository": {
     "url": "https://github.com/freema/openclaw-mcp",
