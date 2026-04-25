@@ -32,7 +32,8 @@ LABEL org.opencontainers.image.title="openclaw-mcp" \
       org.opencontainers.image.description="Model Context Protocol server for OpenClaw AI assistant integration" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.source="https://github.com/freema/openclaw-mcp" \
-      org.opencontainers.image.licenses="MIT"
+      org.opencontainers.image.licenses="MIT" \
+      io.modelcontextprotocol.server.name="io.github.freema/openclaw-mcp"
 
 # Copy tini binary from builder
 COPY --from=builder /usr/bin/tini /usr/bin/tini

@@ -31,6 +31,38 @@ jobs:
           "
           cat server.json
 
+      - name: Wait for npm package to be available
+        run: |
+          VERSION=$(node -p "require('./server.json').version")
+          echo "Waiting for openclaw-mcp@$VERSION on npm..."
+          for i in $(seq 1 60); do
+            if npm view "openclaw-mcp@$VERSION" version 2>/dev/null | grep -q "^$VERSION$"; then
+              echo "Package available."
+              exit 0
+            fi
+            echo "Not yet (attempt $i/60), sleeping 10s..."
+            sleep 10
+          done
+          echo "Timed out waiting for npm package."
+          exit 1
+
+      - name: Wait for OCI image to be available
+        run: |
+          VERSION=$(node -p "require('./server.json').version")
+          echo "Waiting for ghcr.io/freema/openclaw-mcp:$VERSION..."
+          TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:freema/openclaw-mcp:pull" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.parse(d).token))")
+          for i in $(seq 1 60); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" "https://ghcr.io/v2/freema/openclaw-mcp/manifests/$VERSION")
+            if [ "$CODE" = "200" ]; then
+              echo "Image available."
+              exit 0
+            fi
+            echo "Not yet (HTTP $CODE, attempt $i/60), sleeping 10s..."
+            sleep 10
+          done
+          echo "Timed out waiting for OCI image."
+          exit 1
+
       - name: Install mcp-publisher
         run: |
           curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" \
