@@ -52,7 +52,10 @@ jobs:
           echo "Waiting for ghcr.io/freema/openclaw-mcp:$VERSION..."
           TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:freema/openclaw-mcp:pull" | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>console.log(JSON.parse(d).token))")
           for i in $(seq 1 60); do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $TOKEN" "https://ghcr.io/v2/freema/openclaw-mcp/manifests/$VERSION")
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
+              "https://ghcr.io/v2/freema/openclaw-mcp/manifests/$VERSION")
             if [ "$CODE" = "200" ]; then
               echo "Image available."
               exit 0
