@@ -1,3 +1,5 @@
+<!-- mcp-name: io.github.freema/openclaw-mcp -->
+
 # OpenClaw MCP Server
 
 [![npm version](https://badge.fury.io/js/openclaw-mcp.svg)](https://www.npmjs.com/package/openclaw-mcp)
