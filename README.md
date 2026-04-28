@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/freema-openclaw-mcp-badge.png)](https://mseep.ai/app/freema-openclaw-mcp)
+
 <!-- mcp-name: io.github.freema/openclaw-mcp -->
 
 # OpenClaw MCP Server
