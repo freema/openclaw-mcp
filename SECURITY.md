@@ -105,12 +105,21 @@ server {
 
 ### Reporting Vulnerabilities
 
-If you discover a security vulnerability, please:
+If you discover a security vulnerability, please **do not** open a public issue.
 
-1. **Do not** open a public issue
-2. Email security details to: [security contact]
-3. Include steps to reproduce
-4. Allow 90 days for a fix before disclosure
+Instead, report it privately via GitHub Security Advisories:
+
+👉 **[Report a vulnerability](https://github.com/freema/openclaw-mcp/security/advisories/new)**
+
+When reporting, please include:
+
+1. A clear description of the issue
+2. Steps to reproduce
+3. Impact assessment (if known)
+4. Suggested fix (optional)
+
+We will acknowledge receipt within 72 hours and aim to release a fix as soon as
+possible. Please allow up to 90 days for a fix before public disclosure.
 
 ### Security Updates
 
