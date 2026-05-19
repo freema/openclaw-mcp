@@ -156,6 +156,27 @@ See [Installation Guide](docs/installation.md) for details.
 | `openclaw_task_list` | List all tasks with filtering |
 | `openclaw_task_cancel` | Cancel a pending task |
 
+## Using OpenClaw Plugins Through the Bridge
+
+This MCP server sends Claude.ai or Claude Desktop requests to your OpenClaw
+gateway, so OpenClaw-native plugins should be installed in OpenClaw itself.
+For X/Twitter automation, install TweetClaw in the OpenClaw workspace:
+
+```bash
+openclaw plugins install @xquik/tweetclaw
+```
+
+Then ask Claude to delegate X/Twitter work to OpenClaw. TweetClaw can search
+tweets, search tweet replies, export followers, inspect users, manage media,
+send direct messages, monitor tweets, create webhooks, run giveaway draws, and
+request reviewed post tweets or post tweet replies through OpenClaw approval
+prompts.
+
+Keep TweetClaw credentials in OpenClaw plugin config, not in Claude.ai, Claude
+Desktop, or this MCP bridge config. See the
+[TweetClaw README](https://github.com/Xquik-dev/tweetclaw#readme) for setup and
+safety details.
+
 ## Multi-Instance Mode
 
 Orchestrate multiple OpenClaw gateways from a single MCP server. One bridge, many claws — route requests to prod, staging, dev, or whatever you name them (lobster-supreme and the-claw-abides are perfectly valid names).
@@ -281,4 +302,4 @@ Created by [Tomáš Grasl](https://www.tomasgrasl.cz/)
 ## Related Projects
 
 - [OpenClaw](https://github.com/openclaw/openclaw) — The AI assistant this MCP connects to
-- [MCP Specification](https://spec.modelcontextprotocol.io/) — Model Context Protocol docs
+- [MCP Specification](https://modelcontextprotocol.io/specification) - Model Context Protocol docs
