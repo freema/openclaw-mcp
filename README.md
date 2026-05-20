@@ -70,7 +70,9 @@ export OPENCLAW_GATEWAY_TOKEN=your-gateway-token
 docker compose up -d
 ```
 
-Then in Claude.ai add a custom MCP connector pointing to your server with `MCP_CLIENT_ID=openclaw` and your `MCP_CLIENT_SECRET`.
+Then in Claude.ai add a custom MCP connector pointing to `https://your-domain.com/mcp` with `MCP_CLIENT_ID=openclaw` and your `MCP_CLIENT_SECRET`.
+
+> **Important:** The connector URL **must end with `/mcp`** — that's the Streamable HTTP endpoint. A bare domain (`https://your-domain.com`) hits the server root and returns 404 after OAuth completes.
 
 > **Tip:** Pin a specific version instead of `latest` for production: `ghcr.io/freema/openclaw-mcp:1.1.0`
 

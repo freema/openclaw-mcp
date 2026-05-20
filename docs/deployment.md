@@ -197,6 +197,10 @@ The OpenClaw gateway's HTTP chat completions endpoint is disabled by default. En
 
 You're running behind a reverse proxy but haven't set `MCP_ISSUER_URL`. The OAuth metadata endpoints are advertising `http://localhost:3000` instead of your public HTTPS URL. Set `MCP_ISSUER_URL` to your public URL (e.g., `https://mcp.your-domain.com`) or pass `--issuer-url` on the CLI.
 
+### `POST /` or `GET /` returns 404 after OAuth succeeds
+
+Your Claude.ai connector URL is missing the `/mcp` path. The MCP Streamable HTTP transport is mounted at `/mcp`, not at the server root (which is intentional — root is reserved for `/health`, `/.well-known/*`, OAuth endpoints, and the legacy SSE transport). Update the connector URL in Claude.ai to end with `/mcp`, e.g. `https://mcp.your-domain.com/mcp`.
+
 ### `fetch failed` / MCP bridge can't reach gateway
 
 When both services run in Docker, the MCP bridge must connect via the Docker network hostname (e.g., `http://openclaw-gateway:18789`), not `localhost`. Make sure both containers are on the same Docker network.
