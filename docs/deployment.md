@@ -78,6 +78,7 @@ docker compose up -d
 - [ ] `MCP_CLIENT_ID` is valid (3–64 chars, alphanumeric/dashes/underscores)
 - [ ] `MCP_CLIENT_SECRET` generated securely (`openssl rand -hex 32`, min 32 chars)
 - [ ] `MCP_ISSUER_URL` set to public HTTPS URL (when behind reverse proxy)
+- [ ] `TRUST_PROXY` set to the right hop count / CIDR (when behind reverse proxy)
 - [ ] `MCP_REDIRECT_URIS` restricted to known callback URLs
 - [ ] CORS restricted to known origins (`CORS_ORIGINS=https://claude.ai`)
 - [ ] `OPENCLAW_GATEWAY_TOKEN` set for gateway authentication
@@ -88,7 +89,9 @@ docker compose up -d
 
 The MCP bridge must be served over HTTPS for production use. Use a reverse proxy that handles TLS termination.
 
-> **Important:** You **must** set `MCP_ISSUER_URL` to your public HTTPS URL. Without this, OAuth metadata endpoints will advertise `http://localhost:3000` and MCP clients (including Claude.ai) will fail to authenticate with the error: `Protected resource http://localhost:3000/mcp does not match expected https://your-domain.com/mcp`.
+> **Important:** When running behind a reverse proxy you **must** set both:
+> - `MCP_ISSUER_URL` to your public HTTPS URL — otherwise OAuth metadata endpoints advertise `http://localhost:3000` and MCP clients (including Claude.ai) fail to authenticate with `Protected resource http://localhost:3000/mcp does not match expected https://your-domain.com/mcp`.
+> - `TRUST_PROXY=1` so Express trusts the proxy's `X-Forwarded-For` header — otherwise `express-rate-limit` (used by the MCP SDK auth handlers) crashes `/token` with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`.
 
 ### Caddy (recommended)
 
@@ -122,6 +125,7 @@ services:
       - "3000"
     environment:
       - MCP_ISSUER_URL=https://mcp.your-domain.com
+      - TRUST_PROXY=1
       # ... other env vars
 
 volumes:
@@ -200,6 +204,10 @@ You're running behind a reverse proxy but haven't set `MCP_ISSUER_URL`. The OAut
 ### `POST /` or `GET /` returns 404 after OAuth succeeds
 
 Your Claude.ai connector URL is missing the `/mcp` path. The MCP Streamable HTTP transport is mounted at `/mcp`, not at the server root (which is intentional — root is reserved for `/health`, `/.well-known/*`, OAuth endpoints, and the legacy SSE transport). Update the connector URL in Claude.ai to end with `/mcp`, e.g. `https://mcp.your-domain.com/mcp`.
+
+### `ValidationError: ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` on `/token`
+
+The server is behind a reverse proxy that sets `X-Forwarded-For`, but Express's `trust proxy` is left at its default (`false`). The MCP SDK's OAuth handlers use `express-rate-limit`, which refuses to read the forwarded header in that configuration and crashes the request. Set `TRUST_PROXY=1` (single proxy in front) or `--trust-proxy 1`. Use a higher hop count, a CIDR/IP, or a keyword (`loopback`, `linklocal`, `uniquelocal`) for more complex topologies — see [Server Settings](configuration.md#server-settings-sse-transport).
 
 ### `fetch failed` / MCP bridge can't reach gateway
 

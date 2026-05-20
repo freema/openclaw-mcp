@@ -18,6 +18,7 @@ export interface CliArgs {
   issuerUrl: string | undefined;
   redirectUris: string[] | undefined;
   allowDcr: boolean;
+  trustProxy: string | undefined;
   instances: InstanceConfig[];
 }
 
@@ -100,6 +101,12 @@ export function parseArguments(version: string): CliArgs {
         'Allow OAuth Dynamic Client Registration (Cursor/Windsurf compatibility, dev-only)',
       default: process.env.MCP_DANGEROUSLY_ALLOW_DCR === 'true',
     })
+    .option('trust-proxy', {
+      type: 'string',
+      description:
+        'Express trust proxy setting when behind a reverse proxy (e.g. "1", "true", or a CIDR)',
+      default: process.env.TRUST_PROXY || undefined,
+    })
     .help()
     .parseSync();
 
@@ -168,6 +175,7 @@ export function parseArguments(version: string): CliArgs {
           .filter(Boolean)
       : undefined,
     allowDcr: argv['allow-dcr'] as boolean,
+    trustProxy: argv['trust-proxy'] as string | undefined,
     instances,
   };
 }

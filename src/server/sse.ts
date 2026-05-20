@@ -31,8 +31,39 @@ export interface SSEServerConfig {
   host: string;
   /** Override the OAuth issuer URL (e.g., https://mcp.example.com behind a reverse proxy) */
   issuerUrl?: string;
+  /**
+   * Express `trust proxy` setting. Required when behind a reverse proxy that
+   * sets `X-Forwarded-For` — otherwise `express-rate-limit` (used by the MCP
+   * SDK auth handlers) throws `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` on `/token`.
+   * Accepts `true` / `false`, a hop count (e.g. `1`), or an IP/CIDR string or
+   * keyword (`loopback`, `linklocal`, `uniquelocal`). Undefined leaves the
+   * Express default (`false`) untouched.
+   */
+  trustProxy?: boolean | number | string;
   /** Auth is enabled when authConfig is provided */
   authConfig?: AuthProviderConfig;
+}
+
+/**
+ * Parse the TRUST_PROXY env var / --trust-proxy CLI flag into an
+ * Express-compatible value. Returns `undefined` when the input is empty so
+ * callers can skip `app.set('trust proxy', …)` entirely.
+ */
+export function parseTrustProxy(value: string | undefined): boolean | number | string | undefined {
+  if (value === undefined || value === '') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  if (trimmed === '') {
+    return undefined;
+  }
+  const lower = trimmed.toLowerCase();
+  if (lower === 'true') return true;
+  if (lower === 'false') return false;
+  if (/^\d+$/.test(trimmed)) {
+    return parseInt(trimmed, 10);
+  }
+  return trimmed;
 }
 
 // --- CORS helpers ---
@@ -110,6 +141,14 @@ export async function createSSEServer(
 
   // Express app from SDK (includes JSON body parser + DNS rebinding protection)
   const app = createMcpExpressApp({ host: config.host });
+
+  // Configure Express `trust proxy` when running behind a reverse proxy.
+  // Without this, `express-rate-limit` (used by the MCP SDK auth handlers)
+  // crashes /token with ERR_ERL_UNEXPECTED_X_FORWARDED_FOR.
+  if (config.trustProxy !== undefined) {
+    app.set('trust proxy', config.trustProxy);
+    log(`Trust proxy: ${JSON.stringify(config.trustProxy)}`);
+  }
 
   // --- CORS middleware (before auth so preflight works) ---
   app.use((req: Request, res: Response, next: NextFunction) => {

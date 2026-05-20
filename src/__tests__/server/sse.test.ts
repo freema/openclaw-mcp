@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { loadCorsConfig, isOriginAllowed } from '../../server/sse.js';
+import { loadCorsConfig, isOriginAllowed, parseTrustProxy } from '../../server/sse.js';
 
 describe('loadCorsConfig', () => {
   beforeEach(() => {
@@ -74,5 +74,42 @@ describe('isOriginAllowed', () => {
   it('matches with protocol prefix', () => {
     expect(isOriginAllowed('https://example.com', ['example.com'])).toBe(true);
     expect(isOriginAllowed('http://example.com', ['example.com'])).toBe(true);
+  });
+});
+
+describe('parseTrustProxy', () => {
+  it('returns undefined for unset input', () => {
+    expect(parseTrustProxy(undefined)).toBeUndefined();
+  });
+
+  it('returns undefined for empty string', () => {
+    expect(parseTrustProxy('')).toBeUndefined();
+    expect(parseTrustProxy('   ')).toBeUndefined();
+  });
+
+  it('parses "true" / "false" (case-insensitive) into booleans', () => {
+    expect(parseTrustProxy('true')).toBe(true);
+    expect(parseTrustProxy('TRUE')).toBe(true);
+    expect(parseTrustProxy('false')).toBe(false);
+    expect(parseTrustProxy('False')).toBe(false);
+  });
+
+  it('parses pure-digit strings into numbers (hop count)', () => {
+    expect(parseTrustProxy('0')).toBe(0);
+    expect(parseTrustProxy('1')).toBe(1);
+    expect(parseTrustProxy('2')).toBe(2);
+  });
+
+  it('passes CIDR / IP / keyword strings through untouched', () => {
+    expect(parseTrustProxy('loopback')).toBe('loopback');
+    expect(parseTrustProxy('linklocal')).toBe('linklocal');
+    expect(parseTrustProxy('uniquelocal')).toBe('uniquelocal');
+    expect(parseTrustProxy('10.0.0.0/8')).toBe('10.0.0.0/8');
+    expect(parseTrustProxy('192.168.1.1')).toBe('192.168.1.1');
+  });
+
+  it('trims surrounding whitespace', () => {
+    expect(parseTrustProxy('  1  ')).toBe(1);
+    expect(parseTrustProxy('  true  ')).toBe(true);
   });
 });

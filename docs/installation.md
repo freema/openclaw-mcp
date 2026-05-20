@@ -101,8 +101,11 @@ Options:
   --client-secret     MCP OAuth client secret  [env: MCP_CLIENT_SECRET]
   --issuer-url        OAuth issuer URL         [env: MCP_ISSUER_URL]
   --redirect-uris     Allowed redirect URIs    [env: MCP_REDIRECT_URIS]
+  --trust-proxy       Express trust proxy      [env: TRUST_PROXY]
   --version           Show version number
   --help              Show help
 ```
 
 > **Note:** `--issuer-url` is required when running behind a reverse proxy (Caddy, nginx, etc.) so that OAuth metadata endpoints return the correct public HTTPS URL instead of `http://localhost:3000`.
+
+> **Note:** `--trust-proxy` (or `TRUST_PROXY`) is also required when running behind a reverse proxy. Use `1` for a single proxy, `true` on a fully private network, or a CIDR/keyword (`loopback`, `linklocal`, `uniquelocal`) for more specific setups. Without it, `/token` crashes with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`.

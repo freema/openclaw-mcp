@@ -102,11 +102,24 @@ services:
 
 ### Server Settings (SSE transport)
 
-| Variable | Description          | Default   |
-| -------- | -------------------- | --------- |
-| `PORT`   | SSE server port      | `3000`    |
-| `HOST`   | SSE server host      | `0.0.0.0` |
-| `DEBUG`  | Enable debug logging | `false`   |
+| Variable      | Description                                                       | Default                  |
+| ------------- | ----------------------------------------------------------------- | ------------------------ |
+| `PORT`        | SSE server port                                                   | `3000`                   |
+| `HOST`        | SSE server host                                                   | `0.0.0.0`                |
+| `DEBUG`       | Enable debug logging                                              | `false`                  |
+| `TRUST_PROXY` | Express `trust proxy` setting (required behind a reverse proxy)   | (unset — trust nothing)  |
+
+**`TRUST_PROXY` values:**
+
+| Value          | Meaning                                                                        |
+| -------------- | ------------------------------------------------------------------------------ |
+| (unset)        | Express default — do not trust any proxy                                       |
+| `1`            | Trust one hop — typical when there is a single reverse proxy in front          |
+| `true`         | Trust every proxy — only safe on a fully private network                       |
+| `loopback`     | Trust `127.0.0.1` and `::1`                                                    |
+| `10.0.0.0/8`   | Trust a specific IP or CIDR range                                              |
+
+When `TRUST_PROXY` is unset and a reverse proxy injects an `X-Forwarded-For` header, the MCP SDK's `/token` handler crashes with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` and OAuth fails. Set this whenever the server is behind Caddy, nginx, Traefik, Cloudflare Tunnel, ngrok, or any other proxy.
 
 ### CORS Configuration
 
