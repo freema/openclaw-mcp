@@ -54,6 +54,7 @@ services:
       - MCP_CLIENT_ID=openclaw
       - MCP_CLIENT_SECRET=${MCP_CLIENT_SECRET}
       - MCP_ISSUER_URL=${MCP_ISSUER_URL:-}
+      - TRUST_PROXY=1
       - CORS_ORIGINS=https://claude.ai
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -110,7 +111,9 @@ AUTH_ENABLED=true MCP_CLIENT_ID=openclaw MCP_CLIENT_SECRET=your-secret \
   npx openclaw-mcp --transport sse --port 3000
 ```
 
-> **Important:** When running behind a reverse proxy (Caddy, nginx, etc.), you **must** set `MCP_ISSUER_URL` (or `--issuer-url`) to your public HTTPS URL. Without this, OAuth metadata will advertise `http://localhost:3000` and clients will fail to authenticate.
+> **Important:** When running behind a reverse proxy (Caddy, nginx, Traefik, Cloudflare Tunnel, etc.) you **must** set:
+> - `MCP_ISSUER_URL` (or `--issuer-url`) to your public HTTPS URL — otherwise OAuth metadata advertises `http://localhost:3000` and clients fail to authenticate.
+> - `TRUST_PROXY=1` (or `--trust-proxy 1`) — otherwise `express-rate-limit` rejects the proxy's `X-Forwarded-For` header and `/token` crashes with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`.
 
 See [Installation Guide](docs/installation.md) for details.
 

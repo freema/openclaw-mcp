@@ -5,7 +5,7 @@ import { log, logError, setDebugEnabled } from './utils/logger.js';
 import { parseArguments } from './cli.js';
 import { InstanceRegistry } from './openclaw/registry.js';
 import { createMcpServer, type ToolRegistrationDeps } from './server/tools-registration.js';
-import { createSSEServer, type SSEServerConfig } from './server/sse.js';
+import { createSSEServer, parseTrustProxy, type SSEServerConfig } from './server/sse.js';
 
 // Parse CLI arguments
 const args = parseArguments(SERVER_VERSION);
@@ -51,6 +51,7 @@ async function main() {
       port: args.port,
       host: args.host,
       issuerUrl: args.issuerUrl,
+      trustProxy: parseTrustProxy(args.trustProxy),
     };
 
     // Enable OAuth when auth flag is set and client credentials are provided
