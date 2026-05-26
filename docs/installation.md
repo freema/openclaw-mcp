@@ -38,7 +38,7 @@ For local use with Claude Desktop, use stdio transport (default):
 
 ## Claude.ai (Remote Access)
 
-For remote access via Claude.ai, deploy with SSE transport and OAuth 2.1 authentication.
+For remote access via Claude.ai, deploy with HTTP transport and OAuth 2.1 authentication.
 
 ### 1. Generate credentials
 
@@ -57,7 +57,7 @@ MCP_CLIENT_ID=openclaw \
 MCP_CLIENT_SECRET=your-secret \
 CORS_ORIGINS=https://claude.ai \
 OPENCLAW_GATEWAY_TOKEN=your-gateway-token \
-openclaw-mcp --transport sse --port 3000
+openclaw-mcp --transport http --port 3000
 ```
 
 ### 3. Add to Claude.ai
@@ -92,9 +92,9 @@ Options:
   --openclaw-url, -u  OpenClaw gateway URL     [default: "http://127.0.0.1:18789"]
   --gateway-token     Bearer token for gateway [default: none]
   --model, -m         Model name for chat      [default: "openclaw"]
-  --transport, -t     Transport mode           [choices: "stdio", "sse"] [default: "stdio"]
-  --port, -p          Port for SSE server      [default: 3000]
-  --host              Host for SSE server      [default: "0.0.0.0"]
+  --transport, -t     Transport mode           [choices: "stdio", "http", "sse"] [default: "stdio"]
+  --port, -p          Port for HTTP server     [default: 3000]
+  --host              Host for HTTP server     [default: "0.0.0.0"]
   --debug             Enable debug logging     [default: false]
   --auth              Enable OAuth             [default: false]
   --client-id         MCP OAuth client ID      [env: MCP_CLIENT_ID]

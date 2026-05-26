@@ -7,7 +7,7 @@ export interface CliArgs {
   openclawUrl: string;
   gatewayToken: string | undefined;
   model: string;
-  transport: 'stdio' | 'sse';
+  transport: 'stdio' | 'http' | 'sse';
   port: number;
   host: string;
   timeout: number;
@@ -45,19 +45,20 @@ export function parseArguments(version: string): CliArgs {
     .option('transport', {
       alias: 't',
       type: 'string',
-      choices: ['stdio', 'sse'] as const,
-      description: 'Transport mode (stdio for local, sse for remote)',
+      choices: ['stdio', 'http', 'sse'] as const,
+      description:
+        'Transport mode (stdio for local, http for remote; "sse" is a deprecated alias for "http")',
       default: 'stdio',
     })
     .option('port', {
       alias: 'p',
       type: 'number',
-      description: 'Port for SSE server',
+      description: 'Port for HTTP server',
       default: parseInt(process.env.PORT || '3000', 10),
     })
     .option('host', {
       type: 'string',
-      description: 'Host for SSE server',
+      description: 'Host for HTTP server',
       default: process.env.HOST || '0.0.0.0',
     })
     .option('timeout', {
@@ -72,7 +73,7 @@ export function parseArguments(version: string): CliArgs {
     })
     .option('auth', {
       type: 'boolean',
-      description: 'Enable OAuth authentication (SSE mode)',
+      description: 'Enable OAuth authentication (HTTP mode)',
       default: process.env.AUTH_ENABLED === 'true' || process.env.OAUTH_ENABLED === 'true',
     })
     .option('client-id', {
@@ -159,7 +160,7 @@ export function parseArguments(version: string): CliArgs {
     openclawUrl: argv['openclaw-url'] as string,
     gatewayToken: argv['gateway-token'] as string | undefined,
     model: argv.model as string,
-    transport: argv.transport as 'stdio' | 'sse',
+    transport: argv.transport as 'stdio' | 'http' | 'sse',
     port: argv.port,
     host: argv.host,
     timeout: argv.timeout,

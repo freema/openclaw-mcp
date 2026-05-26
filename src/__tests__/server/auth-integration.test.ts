@@ -3,7 +3,7 @@
  *
  * Starts a real Express server and makes HTTP requests to confirm:
  * - /health is always accessible (no auth)
- * - /mcp, /sse, /messages return 401 without a valid Bearer token
+ * - /mcp, /sse (legacy), /messages (legacy) return 401 without a valid Bearer token
  * - Dynamic registration is disabled (returns 404)
  * - Full OAuth flow with pre-configured client works
  * - Unknown client_id is rejected
@@ -41,7 +41,7 @@ function createTestApp() {
 
   const bearerAuth = requireBearerAuth({ verifier: provider });
 
-  // -- Same pattern as sse.ts: withAuth spread --
+  // -- Same pattern as http.ts: withAuth spread --
   const authMiddleware: ((req: Request, res: Response, next: NextFunction) => void) | undefined =
     bearerAuth;
 

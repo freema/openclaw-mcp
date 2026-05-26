@@ -108,7 +108,7 @@ Add to your Claude Desktop config:
 AUTH_ENABLED=true MCP_CLIENT_ID=openclaw MCP_CLIENT_SECRET=your-secret \
   MCP_ISSUER_URL=https://mcp.your-domain.com \
   CORS_ORIGINS=https://claude.ai OPENCLAW_GATEWAY_TOKEN=your-gateway-token \
-  npx openclaw-mcp --transport sse --port 3000
+  npx openclaw-mcp --transport http --port 3000
 ```
 
 > **Important:** When running behind a reverse proxy (Caddy, nginx, Traefik, Cloudflare Tunnel, etc.) you **must** set:
@@ -255,7 +255,7 @@ export MCP_CLIENT_SECRET=$(openssl rand -hex 32)
 
 # Run with auth enabled
 AUTH_ENABLED=true MCP_CLIENT_ID=openclaw MCP_CLIENT_SECRET=$MCP_CLIENT_SECRET \
-  openclaw-mcp --transport sse
+  openclaw-mcp --transport http
 ```
 
 Configure CORS to restrict access:

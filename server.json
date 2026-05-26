@@ -1,20 +1,20 @@
 {
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.freema/openclaw-mcp",
+  "title": "OpenClaw MCP Server",
   "description": "MCP server bridging Claude.ai/Desktop with self-hosted OpenClaw via OAuth 2.1.",
-  "status": "active",
   "repository": {
     "url": "https://github.com/freema/openclaw-mcp",
     "source": "github"
   },
-  "version": "1.4.0",
+  "version": "1.4.2",
   "websiteUrl": "https://openclaw-mcp.cloud",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "openclaw-mcp",
-      "version": "1.4.0",
+      "version": "1.4.2",
       "transport": {
         "type": "stdio"
       },
@@ -47,7 +47,7 @@
     },
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/freema/openclaw-mcp:1.4.0",
+      "identifier": "ghcr.io/freema/openclaw-mcp:1.4.2",
       "transport": {
         "type": "stdio"
       },

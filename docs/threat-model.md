@@ -5,7 +5,7 @@
 ```
 Claude (Desktop / Claude.ai)
     |
-    | MCP Protocol (stdio or SSE/Streamable HTTP)
+    | MCP Protocol (stdio or Streamable HTTP)
     v
 OpenClaw MCP Server (this project)
     |
@@ -43,7 +43,7 @@ The MCP server is a **stateless proxy** — it translates MCP tool calls into Op
 ### Boundary 1: Claude <-> MCP Server
 
 - **stdio transport (local):** Trusted — communication stays on the local machine. No authentication required.
-- **SSE/HTTP transport (remote):** Untrusted network — requires OAuth 2.1 authentication, HTTPS (via reverse proxy), and CORS restrictions.
+- **HTTP transport (remote):** Untrusted network — requires OAuth 2.1 authentication, HTTPS (via reverse proxy), and CORS restrictions.
 
 ### Boundary 2: MCP Server <-> OpenClaw Gateway
 
@@ -75,7 +75,7 @@ The MCP server is a **stateless proxy** — it translates MCP tool calls into Op
 - Responses are parsed as JSON — no script execution
 - Error messages from the gateway are sanitized before being returned to Claude
 
-### 3. Network-Level Attacks (SSE transport)
+### 3. Network-Level Attacks (HTTP transport)
 
 **Risk:** Man-in-the-middle, replay attacks, unauthorized access.
 

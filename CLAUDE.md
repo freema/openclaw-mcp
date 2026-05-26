@@ -31,7 +31,7 @@ This is a **security-critical** MCP server. Follow these rules:
 ## Architecture
 ```
 Claude Desktop/Claude.ai
-    ↕ (MCP Protocol - stdio or SSE)
+    ↕ (MCP Protocol - stdio or Streamable HTTP)
 OpenClaw MCP Server (this project)
     ↕ (OpenAI-compatible REST API: POST /v1/chat/completions)
 OpenClaw Gateway (http://localhost:18789)
@@ -43,7 +43,7 @@ Authentication uses a Bearer token (`OPENCLAW_GATEWAY_TOKEN`).
 
 ### Transports
 - **stdio** - For local Claude Desktop integration (default)
-- **SSE** - For remote Claude.ai integration (requires OAuth + HTTPS)
+- **HTTP** - For remote Claude.ai integration (Streamable HTTP primary, legacy SSE kept for backward compat; requires OAuth + HTTPS)
 
 ### Tools
 | Tool | Type | Description |
@@ -88,7 +88,7 @@ src/
 ├── mcp/tasks/            # Async task manager
 ├── openclaw/client.ts    # OpenClaw API client (OpenAI-compatible)
 ├── openclaw/types.ts     # TypeScript type definitions
-├── server/sse.ts         # SSE transport (remote access)
+├── server/http.ts        # HTTP transport (remote access)
 └── utils/                # Logger, errors, response helpers
 ```
 

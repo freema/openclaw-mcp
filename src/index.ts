@@ -5,7 +5,7 @@ import { log, logError, setDebugEnabled } from './utils/logger.js';
 import { parseArguments } from './cli.js';
 import { InstanceRegistry } from './openclaw/registry.js';
 import { createMcpServer, type ToolRegistrationDeps } from './server/tools-registration.js';
-import { createSSEServer, parseTrustProxy, type SSEServerConfig } from './server/sse.js';
+import { createHttpServer, parseTrustProxy, type HttpServerConfig } from './server/http.js';
 
 // Parse CLI arguments
 const args = parseArguments(SERVER_VERSION);
@@ -46,8 +46,11 @@ async function main() {
     log(`Instance "${instance.name}": ${instance.url}${defaultLabel}`);
   }
 
-  if (args.transport === 'sse') {
-    const sseConfig: SSEServerConfig = {
+  if (args.transport === 'sse' || args.transport === 'http') {
+    if (args.transport === 'sse') {
+      log('WARNING: --transport sse is deprecated; use --transport http instead');
+    }
+    const httpConfig: HttpServerConfig = {
       port: args.port,
       host: args.host,
       issuerUrl: args.issuerUrl,
@@ -72,7 +75,7 @@ async function main() {
         process.exit(1);
       }
 
-      sseConfig.authConfig = {
+      httpConfig.authConfig = {
         clientId: args.clientId,
         clientSecret: args.clientSecret,
         redirectUris: args.redirectUris,
@@ -118,7 +121,7 @@ async function main() {
       process.exit(1);
     }
 
-    await createSSEServer(sseConfig, deps);
+    await createHttpServer(httpConfig, deps);
   } else {
     // stdio transport (default)
     const server = createMcpServer(deps);

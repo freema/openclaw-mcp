@@ -79,3 +79,13 @@ jobs:
             See [deployment docs](https://github.com/freema/openclaw-mcp/blob/main/docs/deployment.md) for full setup instructions.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger npm publish
+        run: gh workflow run publish.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Trigger MCP Registry publish
+        run: gh workflow run publish-mcp-registry.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

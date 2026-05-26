@@ -1,9 +1,9 @@
 /**
- * SSE / Streamable HTTP Transport for remote MCP access
+ * HTTP Transport for remote MCP access
  *
  * Provides a full Express HTTP server with:
- * - Legacy SSE transport (GET /sse + POST /messages) for Claude.ai compatibility
- * - Modern Streamable HTTP transport (ALL /mcp) for newer clients
+ * - Modern Streamable HTTP transport (POST/GET/DELETE /mcp) — primary
+ * - Legacy SSE transport (GET /sse + POST /messages) — deprecated, kept for backward compat
  * - OAuth 2.1 authentication via MCP SDK (mcpAuthRouter + requireBearerAuth)
  * - .well-known discovery endpoints for OAuth metadata
  * - CORS support
@@ -26,7 +26,7 @@ import { OpenClawAuthProvider, type AuthProviderConfig } from '../auth/provider.
 import { log, logError } from '../utils/logger.js';
 import { createMcpServer, type ToolRegistrationDeps } from './tools-registration.js';
 
-export interface SSEServerConfig {
+export interface HttpServerConfig {
   port: number;
   host: string;
   /** Override the OAuth issuer URL (e.g., https://mcp.example.com behind a reverse proxy) */
@@ -113,7 +113,7 @@ export function isOriginAllowed(origin: string | undefined, allowedOrigins: stri
 
 // --- Session tracking ---
 
-interface SSESession {
+interface LegacySseSession {
   transport: SSEServerTransport;
   server: Server;
 }
@@ -126,17 +126,17 @@ interface StreamableSession {
 // --- Main server factory ---
 
 /**
- * Create and start the HTTP server with SSE + Streamable HTTP transports.
+ * Create and start the HTTP server with Streamable HTTP + legacy SSE transports.
  */
-export async function createSSEServer(
-  config: SSEServerConfig,
+export async function createHttpServer(
+  config: HttpServerConfig,
   deps: ToolRegistrationDeps
 ): Promise<void> {
   const authEnabled = !!config.authConfig?.clientId;
   const corsConfig = loadCorsConfig();
 
   // Active sessions
-  const sseSessions = new Map<string, SSESession>();
+  const legacySseSessions = new Map<string, LegacySseSession>();
   const streamableSessions = new Map<string, StreamableSession>();
 
   // Express app from SDK (includes JSON body parser + DNS rebinding protection)
@@ -220,7 +220,8 @@ export async function createSSEServer(
   app.get('/health', (_req: Request, res: Response) => {
     res.json({
       status: 'ok',
-      transport: 'sse',
+      transport: 'streamable-http',
+      legacySseSupported: true,
       auth: authEnabled,
     });
   });
@@ -233,27 +234,28 @@ export async function createSSEServer(
     return [async (req: Request, res: Response) => handler(req, res)] as const;
   };
 
-  // --- Legacy SSE transport (GET /sse + POST /messages) ---
+  // --- Legacy SSE transport (GET /sse + POST /messages) — deprecated ---
 
   app.get(
     '/sse',
     ...withAuth(async (req: Request, res: Response) => {
+      log('Legacy SSE transport is deprecated; prefer Streamable HTTP at /mcp');
       const transport = new SSEServerTransport('/messages', res as unknown as ServerResponse);
       const server = createMcpServer(deps);
 
       const sessionId = transport.sessionId;
-      sseSessions.set(sessionId, { transport, server });
+      legacySseSessions.set(sessionId, { transport, server });
       log(`SSE session connected: ${sessionId}`);
 
       transport.onclose = () => {
-        sseSessions.delete(sessionId);
+        legacySseSessions.delete(sessionId);
         log(`SSE session disconnected: ${sessionId}`);
       };
 
       try {
         await server.connect(transport);
       } catch (error) {
-        sseSessions.delete(sessionId);
+        legacySseSessions.delete(sessionId);
         logError(`Failed to connect SSE session ${sessionId}`, error);
       }
     })
@@ -263,7 +265,7 @@ export async function createSSEServer(
     '/messages',
     ...withAuth(async (req: Request, res: Response) => {
       const sessionId = req.query.sessionId as string;
-      const session = sseSessions.get(sessionId);
+      const session = legacySseSessions.get(sessionId);
 
       if (!session) {
         res.status(404).json({ error: 'Session not found' });
@@ -349,7 +351,7 @@ export async function createSSEServer(
   // --- Start server ---
 
   const httpServer: HttpServer = app.listen(config.port, config.host, () => {
-    log(`SSE server listening on ${config.host}:${config.port}`);
+    log(`HTTP server listening on ${config.host}:${config.port}`);
     log(`Auth enabled: ${authEnabled}`);
     log(`CORS origins: ${corsConfig.enabled ? corsConfig.origins.join(', ') : 'disabled'}`);
 
@@ -366,25 +368,25 @@ export async function createSSEServer(
 
     log('MCP Endpoints:');
     log('  GET  /health   - Health check (no auth)');
-    log('  GET  /sse      - Legacy SSE stream');
-    log('  POST /messages - Legacy SSE messages');
-    log('  ALL  /mcp      - Streamable HTTP');
+    log('  ALL  /mcp      - Streamable HTTP (primary)');
+    log('  GET  /sse      - Legacy SSE stream (deprecated)');
+    log('  POST /messages - Legacy SSE messages (deprecated)');
   });
 
   // --- Graceful shutdown ---
 
   const shutdown = async () => {
-    log('Shutting down SSE server...');
+    log('Shutting down HTTP server...');
 
-    // Close all SSE sessions
-    for (const [id, session] of sseSessions) {
+    // Close all legacy SSE sessions
+    for (const [id, session] of legacySseSessions) {
       try {
         await session.server.close();
       } catch (error) {
         logError(`Error closing SSE session ${id}`, error);
       }
     }
-    sseSessions.clear();
+    legacySseSessions.clear();
 
     // Close all streamable sessions
     for (const [id, session] of streamableSessions) {
@@ -397,7 +399,7 @@ export async function createSSEServer(
     streamableSessions.clear();
 
     httpServer.close(() => {
-      log('SSE server stopped');
+      log('HTTP server stopped');
       process.exit(0);
     });
 

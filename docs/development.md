@@ -48,7 +48,7 @@ src/
 ├── mcp/
 │   └── tools/      # MCP tool implementations
 ├── openclaw/       # OpenClaw API client
-├── server/         # SSE server (for remote access)
+├── server/         # HTTP server (for remote access)
 ├── utils/          # Logging, errors, helpers
 ├── cli.ts          # CLI argument parsing
 └── index.ts        # Main entry point

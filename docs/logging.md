@@ -18,10 +18,10 @@ The MCP server logs operational events to **stderr** using the `[openclaw-mcp]` 
 
 - Server name and version
 - OpenClaw gateway URL (host only, no tokens)
-- Transport type (stdio or SSE)
+- Transport type (stdio or HTTP)
 - Whether a gateway token is configured (yes/no, not the token itself)
 - OAuth client ID (when auth is enabled)
-- Listening address and port (SSE mode)
+- Listening address and port (HTTP mode)
 - CORS origins configuration
 
 ### Connections (SSE/HTTP transport)
@@ -71,7 +71,7 @@ This is a safety net — the code avoids logging sensitive values in the first p
 | Transport | Destination | Notes |
 |-----------|-------------|-------|
 | stdio | stderr | Cannot use stdout (reserved for MCP protocol) |
-| SSE/HTTP | stderr | Same format, same destination |
+| HTTP | stderr | Same format, same destination |
 | Docker | `docker logs openclaw-mcp` | stderr is captured by Docker's log driver |
 
 ## Docker Log Management

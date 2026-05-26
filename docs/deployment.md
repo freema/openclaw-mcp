@@ -50,7 +50,7 @@ OPENCLAW_GATEWAY_TOKEN=your-gateway-token
 MCP_CLIENT_ID=openclaw
 MCP_CLIENT_SECRET=your-client-secret
 
-# Enable OAuth (required for production SSE)
+# Enable OAuth (required for production HTTP transport)
 AUTH_ENABLED=true
 
 # Public URL (required when behind a reverse proxy)
@@ -203,11 +203,11 @@ You're running behind a reverse proxy but haven't set `MCP_ISSUER_URL`. The OAut
 
 ### `POST /` or `GET /` returns 404 after OAuth succeeds
 
-Your Claude.ai connector URL is missing the `/mcp` path. The MCP Streamable HTTP transport is mounted at `/mcp`, not at the server root (which is intentional — root is reserved for `/health`, `/.well-known/*`, OAuth endpoints, and the legacy SSE transport). Update the connector URL in Claude.ai to end with `/mcp`, e.g. `https://mcp.your-domain.com/mcp`.
+Your Claude.ai connector URL is missing the `/mcp` path. The MCP Streamable HTTP transport is mounted at `/mcp`, not at the server root (which is intentional — root is reserved for `/health`, `/.well-known/*`, OAuth endpoints, and legacy SSE endpoints). Update the connector URL in Claude.ai to end with `/mcp`, e.g. `https://mcp.your-domain.com/mcp`.
 
 ### `ValidationError: ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` on `/token`
 
-The server is behind a reverse proxy that sets `X-Forwarded-For`, but Express's `trust proxy` is left at its default (`false`). The MCP SDK's OAuth handlers use `express-rate-limit`, which refuses to read the forwarded header in that configuration and crashes the request. Set `TRUST_PROXY=1` (single proxy in front) or `--trust-proxy 1`. Use a higher hop count, a CIDR/IP, or a keyword (`loopback`, `linklocal`, `uniquelocal`) for more complex topologies — see [Server Settings](configuration.md#server-settings-sse-transport).
+The server is behind a reverse proxy that sets `X-Forwarded-For`, but Express's `trust proxy` is left at its default (`false`). The MCP SDK's OAuth handlers use `express-rate-limit`, which refuses to read the forwarded header in that configuration and crashes the request. Set `TRUST_PROXY=1` (single proxy in front) or `--trust-proxy 1`. Use a higher hop count, a CIDR/IP, or a keyword (`loopback`, `linklocal`, `uniquelocal`) for more complex topologies — see [Server Settings](configuration.md#server-settings-http-transport).
 
 ### `fetch failed` / MCP bridge can't reach gateway
 

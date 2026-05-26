@@ -100,12 +100,12 @@ services:
 
 **Backward compatibility:** When `OPENCLAW_INSTANCES` is not set, the server creates a single `"default"` instance from `OPENCLAW_URL` + `OPENCLAW_GATEWAY_TOKEN`. Existing deployments work without any configuration change — zero migration required.
 
-### Server Settings (SSE transport)
+### Server Settings (HTTP transport)
 
 | Variable      | Description                                                       | Default                  |
 | ------------- | ----------------------------------------------------------------- | ------------------------ |
-| `PORT`        | SSE server port                                                   | `3000`                   |
-| `HOST`        | SSE server host                                                   | `0.0.0.0`                |
+| `PORT`        | HTTP server port                                                  | `3000`                   |
+| `HOST`        | HTTP server host                                                  | `0.0.0.0`                |
 | `DEBUG`       | Enable debug logging                                              | `false`                  |
 | `TRUST_PROXY` | Express `trust proxy` setting (required behind a reverse proxy)   | (unset — trust nothing)  |
 

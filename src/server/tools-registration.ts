@@ -1,7 +1,7 @@
 /**
  * Shared tool registration for MCP Server instances.
  *
- * Each SSE/Streamable HTTP connection needs its own Server + Transport pair,
+ * Each HTTP connection needs its own Server + Transport pair,
  * but they all register the same set of tools. This module extracts
  * that registration logic into a reusable function.
  */

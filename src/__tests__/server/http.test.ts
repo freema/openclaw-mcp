@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { loadCorsConfig, isOriginAllowed, parseTrustProxy } from '../../server/sse.js';
+import { loadCorsConfig, isOriginAllowed, parseTrustProxy } from '../../server/http.js';
 
 describe('loadCorsConfig', () => {
   beforeEach(() => {
