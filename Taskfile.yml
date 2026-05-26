@@ -83,13 +83,17 @@ tasks:
     desc: Launch MCP Inspector (connects to local MCP server via stdio)
     cmd: npx @modelcontextprotocol/inspector node dist/index.js
 
+  inspector:http:
+    desc: Launch MCP Inspector (connects to HTTP server via Streamable HTTP)
+    cmd: npx @modelcontextprotocol/inspector --transport streamable-http --server-url http://localhost:${PORT:-3000}/mcp
+
   inspector:sse:
-    desc: Launch MCP Inspector (connects to SSE server)
+    desc: Launch MCP Inspector (connects via legacy SSE — deprecated, use inspector:http)
     cmd: npx @modelcontextprotocol/inspector --transport sse --server-url http://localhost:${PORT:-3000}/sse
 
   mcp:dev:
-    desc: Start MCP server in SSE mode (dev)
-    cmd: npx tsx src/index.ts --transport sse
+    desc: Start MCP server in HTTP mode (dev)
+    cmd: npx tsx src/index.ts --transport http
     env:
       OPENCLAW_URL: http://127.0.0.1:18789
       OPENCLAW_GATEWAY_TOKEN: '{{.OPENCLAW_GATEWAY_TOKEN}}'
