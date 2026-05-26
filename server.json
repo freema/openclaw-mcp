@@ -7,14 +7,14 @@
     "url": "https://github.com/freema/openclaw-mcp",
     "source": "github"
   },
-  "version": "1.4.2",
+  "version": "1.5.0",
   "websiteUrl": "https://openclaw-mcp.cloud",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "openclaw-mcp",
-      "version": "1.4.2",
+      "version": "1.5.0",
       "transport": {
         "type": "stdio"
       },
@@ -47,7 +47,7 @@
     },
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/freema/openclaw-mcp:1.4.2",
+      "identifier": "ghcr.io/freema/openclaw-mcp:1.5.0",
       "transport": {
         "type": "stdio"
       },
