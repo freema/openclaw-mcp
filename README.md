@@ -266,6 +266,36 @@ CORS_ORIGINS=https://claude.ai,https://your-app.com
 
 See [Configuration](docs/configuration.md) for all security options.
 
+## Migrating from SSE to HTTP transport
+
+Starting with v1.5.0, the primary transport is **Streamable HTTP** (`--transport http`). The legacy SSE transport (`--transport sse`) is deprecated but still works for backward compatibility.
+
+### What changed
+
+| Before | After |
+|--------|-------|
+| `--transport sse` | `--transport http` (recommended) |
+| Primary endpoint: `GET /sse` | Primary endpoint: `POST/GET/DELETE /mcp` |
+| Health: `"transport": "sse"` | Health: `"transport": "streamable-http"` |
+
+### Migration steps
+
+1. **CLI / Docker**: Replace `--transport sse` with `--transport http`
+   ```bash
+   # Before
+   openclaw-mcp --transport sse --port 3000
+   # After
+   openclaw-mcp --transport http --port 3000
+   ```
+
+2. **Claude.ai connector URL**: No change needed — Claude.ai already uses `/mcp` (Streamable HTTP)
+
+3. **Legacy clients**: The `/sse` and `/messages` endpoints still work. A deprecation warning is logged on each SSE connection.
+
+4. **Dockerfile ENTRYPOINT**: Updated automatically if using the official Docker image
+
+> **Note:** `--transport sse` will continue to work as a deprecated alias. Both transports are served simultaneously regardless of which flag you use.
+
 ## Requirements
 
 - Node.js ≥ 20
