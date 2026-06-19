@@ -13,17 +13,20 @@ const MAX_DEBUG_BODY_LENGTH = 4096;
 export class OpenClawClient {
   private baseUrl: string;
   private gatewayToken: string | undefined;
+  private agentId: string | undefined;
   private timeoutMs: number;
   private model: string;
 
   constructor(
     baseUrl: string,
     gatewayToken?: string,
+    agentId?: string,
     timeoutMs: number = DEFAULT_TIMEOUT_MS,
     model: string = 'openclaw'
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.gatewayToken = gatewayToken;
+    this.agentId = agentId;
     this.timeoutMs = timeoutMs;
     this.model = model;
   }
@@ -34,6 +37,9 @@ export class OpenClawClient {
     };
     if (this.gatewayToken) {
       headers['Authorization'] = `Bearer ${this.gatewayToken}`;
+    }
+    if (this.agentId) {
+      headers['x-openclaw-agent-id'] = this.agentId;
     }
     return headers;
   }

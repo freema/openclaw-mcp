@@ -6,6 +6,7 @@ import type { InstanceConfig } from './openclaw/types.js';
 export interface CliArgs {
   openclawUrl: string;
   gatewayToken: string | undefined;
+  agentId: string | undefined;
   model: string;
   transport: 'stdio' | 'http' | 'sse';
   port: number;
@@ -35,6 +36,11 @@ export function parseArguments(version: string): CliArgs {
       type: 'string',
       description: 'Bearer token for OpenClaw gateway authentication',
       default: process.env.OPENCLAW_GATEWAY_TOKEN || undefined,
+    })
+    .option('agent-id', {
+      type: 'string',
+      description: 'Agent ID for OpenClaw agent routing (e.g. "main")',
+      default: process.env.OPENCLAW_AGENT_ID || undefined,
     })
     .option('model', {
       alias: 'm',
@@ -135,6 +141,7 @@ export function parseArguments(version: string): CliArgs {
       // Apply global timeout fallback for instances that don't specify their own
       instances = (parsed as InstanceConfig[]).map((cfg) => ({
         ...cfg,
+        agentId: cfg.agentId ?? (argv['agent-id'] as string | undefined),
         timeout: cfg.timeout ?? argv.timeout,
       }));
     } catch (error) {
@@ -150,6 +157,7 @@ export function parseArguments(version: string): CliArgs {
         name: 'default',
         url: argv['openclaw-url'] as string,
         token: argv['gateway-token'] as string | undefined,
+        agentId: argv['agent-id'] as string | undefined,
         timeout: argv.timeout,
         default: true,
       },
@@ -159,6 +167,7 @@ export function parseArguments(version: string): CliArgs {
   return {
     openclawUrl: argv['openclaw-url'] as string,
     gatewayToken: argv['gateway-token'] as string | undefined,
+    agentId: argv['agent-id'] as string | undefined,
     model: argv.model as string,
     transport: argv.transport as 'stdio' | 'http' | 'sse',
     port: argv.port,

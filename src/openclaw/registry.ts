@@ -58,7 +58,13 @@ export class InstanceRegistry {
         explicitDefault = config.name;
       }
 
-      const client = new OpenClawClient(config.url, config.token, config.timeout, model);
+      const client = new OpenClawClient(
+        config.url,
+        config.token,
+        config.agentId,
+        config.timeout,
+        model
+      );
       this.instances.set(config.name, { config, client });
     }
 
