@@ -54,6 +54,7 @@ services:
       - MCP_CLIENT_ID=openclaw
       - MCP_CLIENT_SECRET=${MCP_CLIENT_SECRET}
       - MCP_ISSUER_URL=${MCP_ISSUER_URL:-}
+      - MCP_REDIRECT_URIS=https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback
       - TRUST_PROXY=1
       - CORS_ORIGINS=https://claude.ai
     extra_hosts:
@@ -114,6 +115,8 @@ AUTH_ENABLED=true MCP_CLIENT_ID=openclaw MCP_CLIENT_SECRET=your-secret \
 > **Important:** When running behind a reverse proxy (Caddy, nginx, Traefik, Cloudflare Tunnel, etc.) you **must** set:
 > - `MCP_ISSUER_URL` (or `--issuer-url`) to your public HTTPS URL — otherwise OAuth metadata advertises `http://localhost:3000` and clients fail to authenticate.
 > - `TRUST_PROXY=1` (or `--trust-proxy 1`) — otherwise `express-rate-limit` rejects the proxy's `X-Forwarded-For` header and `/token` crashes with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`.
+
+> **Recommended:** Set `MCP_REDIRECT_URIS=https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback` so authorization codes can only be delivered to Claude's callbacks. Note the exact `/api/mcp/auth_callback` path — matching is exact, and getting it wrong fails OAuth with `Unregistered redirect_uri` (see [Troubleshooting](docs/deployment.md#invalid_request--unregistered-redirect_uri-on-authorize)).
 
 See [Installation Guide](docs/installation.md) for details.
 
