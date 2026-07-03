@@ -238,4 +238,85 @@ describe('Full OAuth flow with pre-configured client', () => {
     const body: any = await res.json();
     expect(body.error).toBe('invalid_client');
   });
+
+  it('authorize accepts the claude.ai callback with allow-any default (regression: SDK ≥1.29 uses .some())', async () => {
+    // Claude.ai sends exactly this redirect_uri. With MCP_REDIRECT_URIS unset,
+    // the allow-any fallback must accept it regardless of which membership
+    // check (.includes() / .some()) the installed SDK version uses.
+    const authorizeUrl = new URL(`${baseUrl}/authorize`);
+    authorizeUrl.searchParams.set('response_type', 'code');
+    authorizeUrl.searchParams.set('client_id', CLIENT_ID);
+    authorizeUrl.searchParams.set('redirect_uri', 'https://claude.ai/api/mcp/auth_callback');
+    authorizeUrl.searchParams.set('code_challenge', 'test-challenge');
+    authorizeUrl.searchParams.set('code_challenge_method', 'S256');
+    authorizeUrl.searchParams.set('scope', 'mcp:tools');
+
+    const res = await fetch(authorizeUrl.toString(), { redirect: 'manual' });
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.get('location')!);
+    expect(location.origin + location.pathname).toBe('https://claude.ai/api/mcp/auth_callback');
+    expect(location.searchParams.get('code')).toBeTruthy();
+  });
+});
+
+describe('Explicit redirect URI allow-list (MCP_REDIRECT_URIS)', () => {
+  const ALLOWED_URI = 'https://claude.ai/api/mcp/auth_callback';
+  let restrictedServer: http.Server;
+  let restrictedBaseUrl: string;
+
+  beforeAll(async () => {
+    const provider = new OpenClawAuthProvider({
+      clientId: CLIENT_ID,
+      clientSecret: CLIENT_SECRET,
+      redirectUris: [ALLOWED_URI],
+    });
+    const app = createMcpExpressApp({ host: '127.0.0.1' });
+    app.use(
+      mcpAuthRouter({
+        provider,
+        issuerUrl: new URL('http://127.0.0.1:0'),
+        scopesSupported: ['mcp:tools'],
+      })
+    );
+    await new Promise<void>((resolve) => {
+      restrictedServer = app.listen(0, '127.0.0.1', () => {
+        const addr = restrictedServer.address() as { port: number };
+        restrictedBaseUrl = `http://127.0.0.1:${addr.port}`;
+        resolve();
+      });
+    });
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve, reject) => {
+      restrictedServer.close((err) => (err ? reject(err) : resolve()));
+    });
+  });
+
+  function authorizeUrlWith(redirectUri: string): string {
+    const url = new URL(`${restrictedBaseUrl}/authorize`);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('client_id', CLIENT_ID);
+    url.searchParams.set('redirect_uri', redirectUri);
+    url.searchParams.set('code_challenge', 'test-challenge');
+    url.searchParams.set('code_challenge_method', 'S256');
+    return url.toString();
+  }
+
+  it('accepts a listed redirect_uri', async () => {
+    const res = await fetch(authorizeUrlWith(ALLOWED_URI), { redirect: 'manual' });
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.get('location')!);
+    expect(location.origin + location.pathname).toBe(ALLOWED_URI);
+    expect(location.searchParams.get('code')).toBeTruthy();
+  });
+
+  it('rejects an unlisted redirect_uri', async () => {
+    const res = await fetch(authorizeUrlWith('https://evil.example.com/callback'), {
+      redirect: 'manual',
+    });
+    expect(res.status).toBe(400);
+    const body: any = await res.json();
+    expect(body.error).toBe('invalid_request');
+  });
 });

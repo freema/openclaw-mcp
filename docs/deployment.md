@@ -24,6 +24,7 @@ services:
       - MCP_CLIENT_SECRET=${MCP_CLIENT_SECRET:-}
       - MCP_ISSUER_URL=${MCP_ISSUER_URL:-}
       - MCP_REDIRECT_URIS=${MCP_REDIRECT_URIS:-}
+      - TRUST_PROXY=${TRUST_PROXY:-}
       - CORS_ORIGINS=${CORS_ORIGINS:-https://claude.ai}
       - NODE_ENV=production
     extra_hosts:
@@ -56,6 +57,12 @@ AUTH_ENABLED=true
 # Public URL (required when behind a reverse proxy)
 MCP_ISSUER_URL=https://mcp.your-domain.com
 
+# Trust the reverse proxy's X-Forwarded-For (required behind a reverse proxy)
+TRUST_PROXY=1
+
+# Allowed OAuth redirect URIs — Claude.ai callbacks (recommended for production)
+MCP_REDIRECT_URIS=https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback
+
 # Allowed CORS origins
 CORS_ORIGINS=https://claude.ai
 ```
@@ -79,7 +86,7 @@ docker compose up -d
 - [ ] `MCP_CLIENT_SECRET` generated securely (`openssl rand -hex 32`, min 32 chars)
 - [ ] `MCP_ISSUER_URL` set to public HTTPS URL (when behind reverse proxy)
 - [ ] `TRUST_PROXY` set to the right hop count / CIDR (when behind reverse proxy)
-- [ ] `MCP_REDIRECT_URIS` restricted to known callback URLs
+- [ ] `MCP_REDIRECT_URIS` restricted to known callback URLs (for Claude.ai: `https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback`)
 - [ ] CORS restricted to known origins (`CORS_ORIGINS=https://claude.ai`)
 - [ ] `OPENCLAW_GATEWAY_TOKEN` set for gateway authentication
 - [ ] Dynamic client registration is disabled (default — no `/register` endpoint)
@@ -204,6 +211,18 @@ You're running behind a reverse proxy but haven't set `MCP_ISSUER_URL`. The OAut
 ### `POST /` or `GET /` returns 404 after OAuth succeeds
 
 Your Claude.ai connector URL is missing the `/mcp` path. The MCP Streamable HTTP transport is mounted at `/mcp`, not at the server root (which is intentional — root is reserved for `/health`, `/.well-known/*`, OAuth endpoints, and legacy SSE endpoints). Update the connector URL in Claude.ai to end with `/mcp`, e.g. `https://mcp.your-domain.com/mcp`.
+
+### `invalid_request` / `Unregistered redirect_uri` on `/authorize`
+
+The `redirect_uri` the client sent is not on the server's allow-list. Two common causes:
+
+1. **`MCP_REDIRECT_URIS` is set but doesn't contain the client's exact callback.** Claude.ai uses `https://claude.ai/api/mcp/auth_callback` (and `https://claude.com/api/mcp/auth_callback`) — a similar-looking entry like `https://claude.ai/oauth/callback` does **not** match. Matching is exact on scheme, host, and path; only loopback callbacks (`localhost`, `127.0.0.1`, `[::1]`) get port relaxation per RFC 8252.
+
+2. **You're on bridge ≤ 1.5.0 with `MCP_REDIRECT_URIS` unset.** The allow-any fallback in those versions was silently broken by a change in MCP SDK 1.29 (the SDK switched its membership check from `.includes()` to `.some()`), so *every* redirect_uri was rejected — fresh `npx openclaw-mcp@latest` installs picked the new SDK up automatically. Upgrade to bridge ≥ 1.6.0, or set `MCP_REDIRECT_URIS` explicitly (recommended for production anyway):
+
+```bash
+MCP_REDIRECT_URIS=https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback
+```
 
 ### `ValidationError: ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` on `/token`
 
