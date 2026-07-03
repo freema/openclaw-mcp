@@ -69,17 +69,37 @@ const AUTH_CODE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const REFRESH_TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const REAPER_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
-// An array that says "yes" to any .includes() check.
-// The SDK authorize handler validates redirect_uri against client.redirect_uris.includes().
-// For the pre-configured client we accept any redirect_uri since the real auth
-// gate is the client_secret (verified during token exchange).
-const ALLOW_ANY_REDIRECT: string[] = new Proxy([] as string[], {
-  get(target, prop) {
-    if (prop === 'includes') return () => true;
-    if (prop === 'length') return 1; // SDK checks length === 1 when redirect_uri is omitted
-    return Reflect.get(target, prop);
-  },
-});
+/**
+ * An empty redirect-URI list that reports "registered" for any requested URI.
+ *
+ * The SDK authorize handler validates the requested redirect_uri against
+ * `client.redirect_uris` — via `.includes()` up to SDK 1.28, and via
+ * `.some(redirectUriMatches)` since SDK 1.29. Both membership checks are
+ * overridden here so the allow-any fallback keeps working across SDK
+ * versions. (A Proxy faking only `.includes()` was used before; SDK 1.29's
+ * switch to `.some()` iterated the empty backing array and silently rejected
+ * every redirect_uri with "Unregistered redirect_uri".)
+ *
+ * For the pre-configured client we accept any redirect_uri since the real
+ * auth gate is the client_secret (verified during token exchange).
+ * The list stays empty (`length === 0`), so when a client omits redirect_uri
+ * entirely the SDK reports a proper validation error instead of redirecting
+ * to `undefined`.
+ */
+class AllowAnyRedirectUris extends Array<string> {
+  override includes(_searchElement: string, _fromIndex?: number): boolean {
+    return true;
+  }
+
+  override some(
+    _predicate: (value: string, index: number, array: string[]) => unknown,
+    _thisArg?: unknown
+  ): boolean {
+    return true;
+  }
+}
+
+const ALLOW_ANY_REDIRECT: string[] = new AllowAnyRedirectUris();
 
 /**
  * In-memory clients store.

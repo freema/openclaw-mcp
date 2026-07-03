@@ -97,8 +97,30 @@ describe('OpenClawClientsStore', () => {
   it('accepts any redirect_uri for pre-configured client', async () => {
     const store = new OpenClawClientsStore({ clientId: 'test-id', clientSecret: 'test-secret' });
     const client = await store.getClient('test-id');
+    // SDK ≤1.28 membership check
     expect(client?.redirect_uris.includes('http://any-uri.com/callback')).toBe(true);
     expect(client?.redirect_uris.includes('https://claude.ai/oauth/callback')).toBe(true);
+    // SDK ≥1.29 membership check (.some(redirectUriMatches))
+    expect(
+      client?.redirect_uris.some((registered) => registered === 'http://any-uri.com/callback')
+    ).toBe(true);
+    // Empty backing list → when a client omits redirect_uri entirely, the SDK
+    // reports a validation error instead of redirecting to undefined
+    expect(client?.redirect_uris.length).toBe(0);
+  });
+
+  it('uses the explicit redirect URI list when configured', async () => {
+    const store = new OpenClawClientsStore({
+      clientId: 'test-id',
+      clientSecret: 'test-secret',
+      redirectUris: ['https://claude.ai/api/mcp/auth_callback'],
+    });
+    const client = await store.getClient('test-id');
+    expect(client?.redirect_uris).toEqual(['https://claude.ai/api/mcp/auth_callback']);
+    expect(client?.redirect_uris.includes('https://evil.example.com/callback')).toBe(false);
+    expect(client?.redirect_uris.some((r) => r === 'https://evil.example.com/callback')).toBe(
+      false
+    );
   });
 });
 
