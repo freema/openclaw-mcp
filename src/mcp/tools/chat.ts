@@ -60,7 +60,7 @@ export async function handleOpenclawChat(
 
   try {
     const { client } = registry.resolve(instanceName);
-    const response = await client.chat(msgResult.value, sessionId);
+    const response = await client.chat(msgResult.value, { sessionId });
     return successResponse(response.response);
   } catch (error) {
     return errorResponse(error instanceof Error ? error.message : 'Failed to chat with OpenClaw');

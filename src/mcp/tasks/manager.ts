@@ -26,6 +26,12 @@ export interface Task {
   sessionId?: string;
   instanceId?: string;
   priority: number;
+  /** Streamed characters received so far (running tasks). */
+  progressChars?: number;
+  /** Last streamed activity — proof the gateway is still working. */
+  lastActivityAt?: Date;
+  /** Aborts the in-flight gateway request when a running task is cancelled. */
+  abortController?: AbortController;
 }
 
 export interface TaskCreateOptions {
@@ -135,23 +141,51 @@ class TaskManager {
     if (result !== undefined) task.result = result;
     if (error !== undefined) task.error = error;
 
+    if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+      task.abortController = undefined;
+    }
+
     log(`Task ${id} status: ${status}`);
     return true;
   }
 
   /**
-   * Cancel a pending task
+   * Record streaming progress for a running task
+   */
+  updateProgress(id: string, progressChars: number): boolean {
+    const task = this.tasks.get(id);
+    if (!task || task.status !== 'running') return false;
+
+    task.progressChars = progressChars;
+    task.lastActivityAt = new Date();
+    return true;
+  }
+
+  /**
+   * Attach the abort controller of the in-flight request to a task
+   */
+  attachAbortController(id: string, controller: AbortController): void {
+    const task = this.tasks.get(id);
+    if (task) task.abortController = controller;
+  }
+
+  /**
+   * Cancel a pending or running task. Running tasks have their
+   * in-flight gateway request aborted.
    */
   cancel(id: string): boolean {
     const task = this.tasks.get(id);
     if (!task) return false;
 
-    if (task.status !== 'pending') {
-      return false; // Can only cancel pending tasks
+    if (task.status !== 'pending' && task.status !== 'running') {
+      return false; // Already finished
     }
 
+    const controller = task.abortController;
     task.status = 'cancelled';
     task.completedAt = new Date();
+    task.abortController = undefined;
+    controller?.abort();
     log(`Task cancelled: ${id}`);
     return true;
   }

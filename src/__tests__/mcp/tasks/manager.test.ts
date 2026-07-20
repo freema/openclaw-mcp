@@ -152,11 +152,22 @@ describe('TaskManager', () => {
       expect(taskManager.get(task.id)?.completedAt).toBeInstanceOf(Date);
     });
 
-    it('rejects cancellation of non-pending task', () => {
+    it('cancels a running task and aborts its request', () => {
       const task = taskManager.create({ type: 'chat', input: 'test' });
       taskManager.updateStatus(task.id, 'running');
+      const controller = new AbortController();
+      taskManager.attachAbortController(task.id, controller);
+
+      expect(taskManager.cancel(task.id)).toBe(true);
+      expect(taskManager.get(task.id)?.status).toBe('cancelled');
+      expect(controller.signal.aborted).toBe(true);
+    });
+
+    it('rejects cancellation of a finished task', () => {
+      const task = taskManager.create({ type: 'chat', input: 'test' });
+      taskManager.updateStatus(task.id, 'completed', 'done');
       expect(taskManager.cancel(task.id)).toBe(false);
-      expect(taskManager.get(task.id)?.status).toBe('running');
+      expect(taskManager.get(task.id)?.status).toBe('completed');
     });
 
     it('returns false for unknown task', () => {
