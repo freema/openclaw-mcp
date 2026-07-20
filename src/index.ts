@@ -130,10 +130,25 @@ async function main() {
     // stdio transport (default). serveStdio owns protocol-era negotiation:
     // 2026-07-28 clients get the modern stateless protocol, 2025-era clients
     // are served through the SDK's legacy path.
-    serveStdio(() => createMcpServer(deps), {
-      onerror: (error) => logError('stdio transport error', error),
+    let started = true;
+    const handle = serveStdio(() => createMcpServer(deps), {
+      onerror: (error) => {
+        // serveStdio swallows a failed start and only reports it here; without
+        // this the process would idle forever claiming to be running.
+        started = false;
+        logError('stdio transport error', error);
+      },
     });
-    log('OpenClaw MCP server running on stdio');
+
+    const shutdownStdio = () => {
+      void Promise.resolve(handle.close?.()).finally(() => process.exit(0));
+    };
+    (process as NodeJS.Process).on('SIGTERM', shutdownStdio);
+    (process as NodeJS.Process).on('SIGINT', shutdownStdio);
+
+    if (started) {
+      log('OpenClaw MCP server running on stdio');
+    }
   }
 }
 

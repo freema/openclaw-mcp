@@ -102,7 +102,8 @@ export function createMcpServer(deps: ToolRegistrationDeps): McpServer {
   server.registerTool(
     'openclaw_instances',
     {
-      description: 'List all configured OpenClaw instances',
+      description:
+        'List all configured OpenClaw instances. Shows instance names, URLs, and which is the default. Use instance names in other tools to target a specific OpenClaw gateway.',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({}),
     },

@@ -22,12 +22,23 @@ import type { Request, Response, NextFunction } from 'express';
 
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import { toNodeHandler } from '@modelcontextprotocol/node';
-import { requireBearerAuth } from '@modelcontextprotocol/express';
+import {
+  requireBearerAuth,
+  localhostHostValidation,
+  localhostOriginValidation,
+  getOAuthProtectedResourceMetadataUrl,
+} from '@modelcontextprotocol/express';
 
 import { OpenClawAuthProvider, type AuthProviderConfig } from '../auth/provider.js';
 import { createAuthRouter } from '../auth/router.js';
 import { log, logError } from '../utils/logger.js';
 import { createMcpServer, type ToolRegistrationDeps } from './mcp-server.js';
+
+/**
+ * Maximum accepted MCP request body. Generous enough for large prompts,
+ * small enough that an attacker cannot exhaust memory one request at a time.
+ */
+const MCP_MAX_BODY_SIZE = '4mb';
 
 export interface HttpServerConfig {
   port: number;
@@ -131,9 +142,44 @@ export async function createHttpServer(
   // simple parser keeps values as plain strings, matching our validation.
   app.set('query parser', 'simple');
 
+  // DNS-rebinding protection for loopback binds. A browser can resolve an
+  // attacker-controlled name to 127.0.0.1, so a local server must check that
+  // Host and Origin really are local. SDK v1's createMcpExpressApp did this;
+  // on v2 it has to be wired explicitly.
+  const isLoopbackBind =
+    config.host === '127.0.0.1' || config.host === 'localhost' || config.host === '::1';
+  if (isLoopbackBind) {
+    app.use(localhostHostValidation());
+    app.use(localhostOriginValidation());
+    log('DNS-rebinding protection: enabled (loopback bind)');
+  } else {
+    log(
+      `DNS-rebinding protection: disabled (HOST=${config.host} is not loopback) — ` +
+        'rely on your reverse proxy and CORS_ORIGINS to restrict access'
+    );
+  }
+
   if (config.trustProxy !== undefined) {
+    // `trust proxy: true` makes Express take req.ip from the leftmost
+    // X-Forwarded-For entry, which the client fully controls — rate limiting
+    // then keys on an attacker-chosen value and stops limiting anything.
+    if (config.trustProxy === true && authEnabled) {
+      logError(
+        'TRUST_PROXY=true is unsafe with authentication enabled: the client-controlled ' +
+          'X-Forwarded-For entry becomes the rate-limit key, disabling rate limiting on ' +
+          'the OAuth endpoints. Set TRUST_PROXY to the number of proxy hops instead ' +
+          '(TRUST_PROXY=1 for a single reverse proxy). Refusing to start.'
+      );
+      process.exit(1);
+    }
     app.set('trust proxy', config.trustProxy);
     log(`Trust proxy: ${JSON.stringify(config.trustProxy)}`);
+  } else if (authEnabled) {
+    log(
+      'WARNING: TRUST_PROXY is not set. Behind a reverse proxy every request appears to ' +
+        "come from the proxy's IP, so the OAuth rate limits apply to all clients as one " +
+        'shared budget. Set TRUST_PROXY=1 when running behind a proxy.'
+    );
   }
 
   // --- CORS middleware (before auth so preflight works) ---
@@ -186,17 +232,27 @@ export async function createHttpServer(
     // Protected Resource Metadata (RFC 9728)
     // Tells clients (Inspector, Claude.ai) where the OAuth server is.
     // This is read-only metadata — no security implications.
+    const protectedResourceMetadata = (resourcePath: string) => ({
+      resource: `${issuerUrl.toString().replace(/\/$/, '')}${resourcePath}`,
+      authorization_servers: [issuerUrl.toString().replace(/\/$/, '')],
+      scopes_supported: ['mcp:tools'],
+    });
     app.get('/.well-known/oauth-protected-resource/:path', (req: Request, res: Response) => {
-      res.json({
-        resource: `${issuerUrl.toString()}${req.params.path}`,
-        authorization_servers: [issuerUrl.toString().replace(/\/$/, '')],
-        scopes_supported: ['mcp:tools'],
-      });
+      res.json(protectedResourceMetadata(`/${req.params.path}`));
+    });
+    // Some clients probe the un-suffixed document.
+    app.get('/.well-known/oauth-protected-resource', (_req: Request, res: Response) => {
+      res.json(protectedResourceMetadata('/mcp'));
     });
 
     // Bearer auth middleware for protected routes (sets req.auth, which
-    // toNodeHandler forwards to the MCP handler as authInfo).
-    authMiddleware = requireBearerAuth({ verifier: provider });
+    // toNodeHandler forwards to the MCP handler as authInfo). The
+    // resource_metadata hint lets an unauthenticated client discover the
+    // authorization server straight from the 401 challenge.
+    authMiddleware = requireBearerAuth({
+      verifier: provider,
+      resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(new URL('/mcp', issuerUrl)),
+    });
   }
 
   // --- Health check (no auth) ---
@@ -220,13 +276,20 @@ export async function createHttpServer(
   });
 
   const mcpRoute = (req: Request, res: Response) => {
-    void nodeHandler(req, res);
+    // Pass the parsed body through — toNodeHandler re-serializes it. Without
+    // a parser in front, it would read the raw stream with no size limit.
+    void nodeHandler(req, res, req.body);
   };
 
+  // Cap the request body. SDK v2 has no maxBodySize option, and its Node
+  // adapter buffers the whole stream into a string, so the limit has to be
+  // enforced here.
+  const mcpBodyParser = express.json({ limit: MCP_MAX_BODY_SIZE });
+
   if (authMiddleware) {
-    app.all('/mcp', authMiddleware, mcpRoute);
+    app.all('/mcp', authMiddleware, mcpBodyParser, mcpRoute);
   } else {
-    app.all('/mcp', mcpRoute);
+    app.all('/mcp', mcpBodyParser, mcpRoute);
   }
 
   // --- Legacy SSE transport: removed in v2.0 ---
@@ -264,8 +327,24 @@ export async function createHttpServer(
 
   // --- Graceful shutdown ---
 
+  let shuttingDown = false;
   const shutdown = async () => {
+    // SIGTERM followed by SIGINT must not run this twice.
+    if (shuttingDown) return;
+    shuttingDown = true;
+
     log('Shutting down HTTP server...');
+
+    // Force exit if the drain below doesn't finish in time.
+    const forceExit = setTimeout(() => {
+      logError('Forced shutdown after timeout');
+      process.exit(1);
+    }, 5000);
+    forceExit.unref?.();
+
+    // Stop accepting first, then abort in-flight exchanges. The reverse order
+    // would kill live requests while the socket still accepts new ones.
+    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
 
     try {
       await mcpHandler.close();
@@ -273,16 +352,9 @@ export async function createHttpServer(
       logError('Error closing MCP handler', error);
     }
 
-    httpServer.close(() => {
-      log('HTTP server stopped');
-      process.exit(0);
-    });
-
-    // Force exit after 5 seconds
-    setTimeout(() => {
-      logError('Forced shutdown after timeout');
-      process.exit(1);
-    }, 5000);
+    clearTimeout(forceExit);
+    log('HTTP server stopped');
+    process.exit(0);
   };
 
   (process as NodeJS.Process).on('SIGTERM', shutdown);

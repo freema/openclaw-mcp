@@ -5,7 +5,6 @@ describe('successResponse', () => {
   it('wraps text in content array with type "text"', () => {
     const result = successResponse('hello');
     expect(result).toEqual({
-      resultType: 'complete',
       content: [{ type: 'text', text: 'hello' }],
     });
   });
