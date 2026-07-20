@@ -1,24 +1,25 @@
 /**
  * Integration test: verify that OAuth auth is enforced at the HTTP level.
  *
- * Starts a real Express server and makes HTTP requests to confirm:
+ * Starts a real Express server (our v2 auth router + SDK v2 bearer middleware)
+ * and makes HTTP requests to confirm:
  * - /health is always accessible (no auth)
- * - /mcp, /sse (legacy), /messages (legacy) return 401 without a valid Bearer token
+ * - /mcp returns 401 without a valid Bearer token
  * - Dynamic registration is disabled (returns 404)
- * - Full OAuth flow with pre-configured client works
+ * - Full OAuth flow (authorize → token → access) with pre-configured client works
+ * - PKCE is enforced on token exchange
  * - Unknown client_id is rejected
  */
 
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import http from 'node:http';
 import { randomUUID, createHash } from 'node:crypto';
-import type { Request, Response, NextFunction } from 'express';
-
-import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
-import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
-import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+import express from 'express';
+import type { Request, Response } from 'express';
+import { requireBearerAuth } from '@modelcontextprotocol/express';
 
 import { OpenClawAuthProvider } from '../../auth/provider.js';
+import { createAuthRouter } from '../../auth/router.js';
 
 const CLIENT_ID = 'test-client';
 const CLIENT_SECRET = 'test-secret-value';
@@ -28,54 +29,25 @@ let baseUrl: string;
 
 function createTestApp() {
   const provider = new OpenClawAuthProvider({ clientId: CLIENT_ID, clientSecret: CLIENT_SECRET });
-  const app = createMcpExpressApp({ host: '127.0.0.1' });
+  const app = express();
 
-  const issuerUrl = new URL('http://127.0.0.1:0');
   app.use(
-    mcpAuthRouter({
+    createAuthRouter({
       provider,
-      issuerUrl,
+      issuerUrl: new URL('http://127.0.0.1:0'),
       scopesSupported: ['mcp:tools'],
     })
   );
 
   const bearerAuth = requireBearerAuth({ verifier: provider });
 
-  // -- Same pattern as http.ts: withAuth spread --
-  const authMiddleware: ((req: Request, res: Response, next: NextFunction) => void) | undefined =
-    bearerAuth;
-
-  const withAuth = (handler: (req: Request, res: Response) => Promise<void>) => {
-    if (authMiddleware) {
-      return [authMiddleware, async (req: Request, res: Response) => handler(req, res)] as const;
-    }
-    return [async (req: Request, res: Response) => handler(req, res)] as const;
-  };
-
   app.get('/health', (_req: Request, res: Response) => {
     res.json({ status: 'ok' });
   });
 
-  app.post(
-    '/mcp',
-    ...withAuth(async (_req: Request, res: Response) => {
-      res.json({ result: 'mcp-ok' });
-    })
-  );
-
-  app.get(
-    '/sse',
-    ...withAuth(async (_req: Request, res: Response) => {
-      res.json({ result: 'sse-ok' });
-    })
-  );
-
-  app.post(
-    '/messages',
-    ...withAuth(async (_req: Request, res: Response) => {
-      res.json({ result: 'messages-ok' });
-    })
-  );
+  app.post('/mcp', bearerAuth, (_req: Request, res: Response) => {
+    res.json({ result: 'mcp-ok' });
+  });
 
   return { app, provider };
 }
@@ -114,20 +86,6 @@ describe('Auth enforcement', () => {
     expect(res.status).toBe(401);
   });
 
-  it('GET /sse returns 401 without auth', async () => {
-    const res = await fetch(`${baseUrl}/sse`);
-    expect(res.status).toBe(401);
-  });
-
-  it('POST /messages returns 401 without auth', async () => {
-    const res = await fetch(`${baseUrl}/messages`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
-    });
-    expect(res.status).toBe(401);
-  });
-
   it('POST /mcp returns 401 with invalid Bearer token', async () => {
     const res = await fetch(`${baseUrl}/mcp`, {
       method: 'POST',
@@ -159,6 +117,7 @@ describe('OAuth metadata', () => {
     const body: any = await res.json();
     expect(body.token_endpoint).toBeDefined();
     expect(body.authorization_endpoint).toBeDefined();
+    expect(body.code_challenge_methods_supported).toEqual(['S256']);
     // Registration should NOT be advertised
     expect(body.registration_endpoint).toBeUndefined();
   });
@@ -219,10 +178,67 @@ describe('Full OAuth flow with pre-configured client', () => {
     });
     expect(mcpRes.status).toBe(200);
 
-    const sseRes = await fetch(`${baseUrl}/sse`, {
-      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    // Step 4: Refresh token rotation
+    const refreshRes = await fetch(`${baseUrl}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: tokens.refresh_token,
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+      }).toString(),
     });
-    expect(sseRes.status).toBe(200);
+    expect(refreshRes.status).toBe(200);
+    const refreshed: any = await refreshRes.json();
+    expect(refreshed.access_token).toBeTruthy();
+    expect(refreshed.access_token).not.toBe(tokens.access_token);
+  });
+
+  it('token exchange fails with wrong code_verifier (PKCE)', async () => {
+    const codeChallenge = createHash('sha256').update('right-verifier').digest('base64url');
+
+    const authorizeUrl = new URL(`${baseUrl}/authorize`);
+    authorizeUrl.searchParams.set('response_type', 'code');
+    authorizeUrl.searchParams.set('client_id', CLIENT_ID);
+    authorizeUrl.searchParams.set('redirect_uri', 'http://localhost/callback');
+    authorizeUrl.searchParams.set('code_challenge', codeChallenge);
+    authorizeUrl.searchParams.set('code_challenge_method', 'S256');
+
+    const authorizeRes = await fetch(authorizeUrl.toString(), { redirect: 'manual' });
+    const code = new URL(authorizeRes.headers.get('location')!).searchParams.get('code')!;
+
+    const tokenRes = await fetch(`${baseUrl}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        code_verifier: 'wrong-verifier',
+      }).toString(),
+    });
+    expect(tokenRes.status).toBe(400);
+    const body: any = await tokenRes.json();
+    expect(body.error).toBe('invalid_grant');
+  });
+
+  it('token exchange fails with wrong client_secret', async () => {
+    const tokenRes = await fetch(`${baseUrl}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: 'whatever',
+        client_id: CLIENT_ID,
+        client_secret: 'wrong-secret',
+        code_verifier: 'v',
+      }).toString(),
+    });
+    expect(tokenRes.status).toBe(401);
+    const body: any = await tokenRes.json();
+    expect(body.error).toBe('invalid_client');
   });
 
   it('authorize rejects unknown client_id', async () => {
@@ -234,15 +250,14 @@ describe('Full OAuth flow with pre-configured client', () => {
     authorizeUrl.searchParams.set('code_challenge_method', 'S256');
 
     const res = await fetch(authorizeUrl.toString(), { redirect: 'manual' });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(401);
     const body: any = await res.json();
     expect(body.error).toBe('invalid_client');
   });
 
-  it('authorize accepts the claude.ai callback with allow-any default (regression: SDK ≥1.29 uses .some())', async () => {
+  it('authorize accepts the claude.ai callback with allow-any default', async () => {
     // Claude.ai sends exactly this redirect_uri. With MCP_REDIRECT_URIS unset,
-    // the allow-any fallback must accept it regardless of which membership
-    // check (.includes() / .some()) the installed SDK version uses.
+    // the allow-any fallback must accept it.
     const authorizeUrl = new URL(`${baseUrl}/authorize`);
     authorizeUrl.searchParams.set('response_type', 'code');
     authorizeUrl.searchParams.set('client_id', CLIENT_ID);
@@ -270,9 +285,9 @@ describe('Explicit redirect URI allow-list (MCP_REDIRECT_URIS)', () => {
       clientSecret: CLIENT_SECRET,
       redirectUris: [ALLOWED_URI],
     });
-    const app = createMcpExpressApp({ host: '127.0.0.1' });
+    const app = express();
     app.use(
-      mcpAuthRouter({
+      createAuthRouter({
         provider,
         issuerUrl: new URL('http://127.0.0.1:0'),
         scopesSupported: ['mcp:tools'],

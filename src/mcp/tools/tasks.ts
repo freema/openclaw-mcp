@@ -4,99 +4,11 @@
  * Provides async/background task management for long-running operations.
  */
 
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { InstanceRegistry } from '../../openclaw/registry.js';
 import { successResponse, errorResponse, type ToolResponse } from '../../utils/response-helpers.js';
 import { taskManager, type Task, type TaskStatus } from '../tasks/manager.js';
 import { log } from '../../utils/logger.js';
 import { validateInputIsObject, validateMessage, validateId } from '../../utils/validation.js';
-
-// ============================================================================
-// Tool Definitions
-// ============================================================================
-
-export const openclawChatAsyncTool: Tool = {
-  name: 'openclaw_chat_async',
-  description:
-    'Send a message to OpenClaw asynchronously. Returns a task_id immediately that can be polled for results. Use this for potentially long-running conversations.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      message: {
-        type: 'string',
-        description: 'The message to send to OpenClaw',
-      },
-      session_id: {
-        type: 'string',
-        description: 'Optional session ID for conversation context',
-      },
-      priority: {
-        type: 'number',
-        description: 'Task priority (higher = processed first). Default: 0',
-      },
-      instance: {
-        type: 'string',
-        description: 'Target OpenClaw instance name. Defaults to the default instance.',
-      },
-    },
-    required: ['message'],
-  },
-};
-
-export const openclawTaskStatusTool: Tool = {
-  name: 'openclaw_task_status',
-  description: 'Check the status of an async task. Returns status, and result if completed.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'The task ID returned from openclaw_chat_async',
-      },
-    },
-    required: ['task_id'],
-  },
-};
-
-export const openclawTaskListTool: Tool = {
-  name: 'openclaw_task_list',
-  description: 'List all tasks. Optionally filter by status, session, or instance.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      status: {
-        type: 'string',
-        enum: ['pending', 'running', 'completed', 'failed', 'cancelled'],
-        description: 'Filter by task status',
-      },
-      session_id: {
-        type: 'string',
-        description: 'Filter by session ID',
-      },
-      instance: {
-        type: 'string',
-        description: 'Filter by instance name',
-      },
-    },
-    required: [],
-  },
-};
-
-export const openclawTaskCancelTool: Tool = {
-  name: 'openclaw_task_cancel',
-  description:
-    'Cancel a pending or running task. Running tasks have their in-flight gateway request aborted.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'The task ID to cancel',
-      },
-    },
-    required: ['task_id'],
-  },
-};
 
 // ============================================================================
 // Background Task Processor

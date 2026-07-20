@@ -16,14 +16,20 @@ describe('OpenClawClientsStore', () => {
     expect(client).toBeUndefined();
   });
 
-  it('does not support dynamic registration by default', () => {
+  it('rejects dynamic registration by default', () => {
     const store = new OpenClawClientsStore({});
-    expect((store as any).registerClient).toBeUndefined();
+    expect(store.allowDynamicRegistration).toBe(false);
+    expect(() =>
+      store.registerClient({
+        client_id: 'dyn-id',
+        redirect_uris: ['http://localhost/cb'],
+      } as any)
+    ).toThrow('Dynamic registration is disabled');
   });
 
-  it('exposes registerClient when allowDynamicRegistration is true', async () => {
+  it('accepts registration when allowDynamicRegistration is true', async () => {
     const store = new OpenClawClientsStore({ allowDynamicRegistration: true });
-    expect(typeof (store as any).registerClient).toBe('function');
+    expect(store.allowDynamicRegistration).toBe(true);
 
     const dynamic = {
       client_id: 'dyn-id',
@@ -35,7 +41,7 @@ describe('OpenClawClientsStore', () => {
       client_name: 'Cursor',
       client_id_issued_at: Math.floor(Date.now() / 1000),
     };
-    const registered = await (store as any).registerClient(dynamic);
+    const registered = store.registerClient(dynamic as any);
     expect(registered.client_id).toBe('dyn-id');
 
     const fetched = await store.getClient('dyn-id');
@@ -44,7 +50,7 @@ describe('OpenClawClientsStore', () => {
 
   it('evicts oldest dynamically registered client when cap is exceeded', async () => {
     const store = new OpenClawClientsStore({ allowDynamicRegistration: true });
-    const register = (store as any).registerClient.bind(store);
+    const register = (client: unknown) => store.registerClient(client as any);
     const makeClient = (id: string) => ({
       client_id: id,
       client_secret: `secret-${id}`,
@@ -72,7 +78,7 @@ describe('OpenClawClientsStore', () => {
       allowDynamicRegistration: true,
     });
 
-    await (store as any).registerClient({
+    store.registerClient({
       client_id: 'dyn-id',
       client_secret: 'dyn-secret',
       redirect_uris: ['http://localhost/cb'],
@@ -137,25 +143,13 @@ describe('OpenClawAuthProvider', () => {
     const client = (await provider.clientsStore.getClient('test-client'))!;
     expect(client).toBeDefined();
 
-    // Simulate authorize — capture the redirect URL
-    let redirectUrl = '';
-    const mockRes = {
-      redirect: (url: string) => {
-        redirectUrl = url;
-      },
-      cookie: () => {},
-    };
-
-    await provider.authorize(
-      client,
-      {
-        state: 'my-state',
-        scopes: ['mcp:tools'],
-        codeChallenge: 'test-challenge',
-        redirectUri: 'http://localhost/callback',
-      },
-      mockRes as any
-    );
+    // Authorize returns the redirect URL directly
+    const redirectUrl = provider.authorize(client, {
+      state: 'my-state',
+      scopes: ['mcp:tools'],
+      codeChallenge: 'test-challenge',
+      redirectUri: 'http://localhost/callback',
+    });
 
     expect(redirectUrl).toContain('code=');
     expect(redirectUrl).toContain('state=my-state');
@@ -187,7 +181,7 @@ describe('OpenClawAuthProvider', () => {
     const provider = new OpenClawAuthProvider(config);
     const client = (await provider.clientsStore.getClient('test-client'))!;
 
-    await expect(provider.exchangeAuthorizationCode(client, 'bad-code')).rejects.toThrow(
+    expect(() => provider.exchangeAuthorizationCode(client, 'bad-code')).toThrow(
       'Invalid authorization code'
     );
   });
@@ -197,27 +191,17 @@ describe('OpenClawAuthProvider', () => {
     const client = (await provider.clientsStore.getClient('test-client'))!;
 
     // Authorize with the real client
-    let redirectUrl = '';
-    const mockRes = {
-      redirect: (url: string) => {
-        redirectUrl = url;
-      },
-    };
-    await provider.authorize(
-      client,
-      {
-        codeChallenge: 'ch',
-        redirectUri: 'http://localhost/cb',
-      },
-      mockRes as any
-    );
+    const redirectUrl = provider.authorize(client, {
+      codeChallenge: 'ch',
+      redirectUri: 'http://localhost/cb',
+    });
 
     const url = new URL(redirectUrl);
     const code = url.searchParams.get('code')!;
 
     // Try to exchange with a different client
     const otherClient = { ...client, client_id: 'other' };
-    await expect(provider.exchangeAuthorizationCode(otherClient, code)).rejects.toThrow(
+    expect(() => provider.exchangeAuthorizationCode(otherClient, code)).toThrow(
       'not issued to this client'
     );
   });
@@ -234,32 +218,22 @@ describe('OpenClawAuthProvider', () => {
     const client = (await provider.clientsStore.getClient('test-client'))!;
 
     // Get initial tokens
-    let redirectUrl = '';
-    const mockRes = {
-      redirect: (url: string) => {
-        redirectUrl = url;
-      },
-    };
-    await provider.authorize(
-      client,
-      {
-        codeChallenge: 'ch',
-        redirectUri: 'http://localhost/cb',
-      },
-      mockRes as any
-    );
+    const redirectUrl = provider.authorize(client, {
+      codeChallenge: 'ch',
+      redirectUri: 'http://localhost/cb',
+    });
 
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = provider.exchangeAuthorizationCode(client, code);
 
     // Refresh
-    const newTokens = await provider.exchangeRefreshToken(client, tokens.refresh_token!);
+    const newTokens = provider.exchangeRefreshToken(client, tokens.refresh_token!);
     expect(newTokens.access_token).toBeTruthy();
     expect(newTokens.access_token).not.toBe(tokens.access_token);
     expect(newTokens.refresh_token).toBeTruthy();
 
     // Old refresh token should be revoked (rotation)
-    await expect(provider.exchangeRefreshToken(client, tokens.refresh_token!)).rejects.toThrow(
+    expect(() => provider.exchangeRefreshToken(client, tokens.refresh_token!)).toThrow(
       'Invalid refresh token'
     );
 
@@ -273,26 +247,16 @@ describe('OpenClawAuthProvider', () => {
     const client = (await provider.clientsStore.getClient('test-client'))!;
 
     // Get tokens
-    let redirectUrl = '';
-    const mockRes = {
-      redirect: (url: string) => {
-        redirectUrl = url;
-      },
-    };
-    await provider.authorize(
-      client,
-      {
-        codeChallenge: 'ch',
-        redirectUri: 'http://localhost/cb',
-      },
-      mockRes as any
-    );
+    const redirectUrl = provider.authorize(client, {
+      codeChallenge: 'ch',
+      redirectUri: 'http://localhost/cb',
+    });
 
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = provider.exchangeAuthorizationCode(client, code);
 
     // Revoke
-    await provider.revokeToken(client, { token: tokens.access_token });
+    provider.revokeToken(client, { token: tokens.access_token });
 
     // Should be invalid now
     await expect(provider.verifyAccessToken(tokens.access_token)).rejects.toThrow(
@@ -304,22 +268,15 @@ describe('OpenClawAuthProvider', () => {
     const provider = new OpenClawAuthProvider(config);
     const client = (await provider.clientsStore.getClient('test-client'))!;
 
-    let redirectUrl = '';
-    const mockRes = {
-      redirect: (url: string) => {
-        redirectUrl = url;
-      },
-    };
-    await provider.authorize(
-      client,
-      { codeChallenge: 'ch', redirectUri: 'http://localhost/cb' },
-      mockRes as any
-    );
+    const redirectUrl = provider.authorize(client, {
+      codeChallenge: 'ch',
+      redirectUri: 'http://localhost/cb',
+    });
     const code = new URL(redirectUrl).searchParams.get('code')!;
-    const tokens = await provider.exchangeAuthorizationCode(client, code);
+    const tokens = provider.exchangeAuthorizationCode(client, code);
 
     const attacker = { ...client, client_id: 'attacker' };
-    await provider.revokeToken(attacker, { token: tokens.access_token });
+    provider.revokeToken(attacker, { token: tokens.access_token });
 
     // Token must still be valid — attacker is not allowed to revoke it.
     const info = await provider.verifyAccessToken(tokens.access_token);

@@ -47,7 +47,7 @@ export function parseArguments(version: string): CliArgs {
       type: 'string',
       choices: ['stdio', 'http', 'sse'] as const,
       description:
-        'Transport mode (stdio for local, http for remote; "sse" is a deprecated alias for "http")',
+        'Transport mode (stdio for local, http for remote; "sse" was removed in v2.0 and exits with an error)',
       default: 'stdio',
     })
     .option('port', {

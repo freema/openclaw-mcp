@@ -1,21 +1,6 @@
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { InstanceRegistry } from '../../openclaw/registry.js';
 import { jsonResponse, errorResponse, type ToolResponse } from '../../utils/response-helpers.js';
 import { validateInputIsObject, validateId } from '../../utils/validation.js';
-
-export const openclawStatusTool: Tool = {
-  name: 'openclaw_status',
-  description: 'Get OpenClaw gateway status and health information',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      instance: {
-        type: 'string',
-        description: 'Target OpenClaw instance name. Defaults to the default instance.',
-      },
-    },
-  },
-};
 
 export async function handleOpenclawStatus(
   registry: InstanceRegistry,

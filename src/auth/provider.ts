@@ -1,34 +1,28 @@
 /**
- * MCP OAuth Server Provider for OpenClaw
+ * OAuth 2.1 Authorization Server state for OpenClaw MCP.
  *
- * Implements OAuthServerProvider from the MCP SDK to provide
- * a full OAuth 2.1 flow (authorization code + PKCE) that
- * Claude.ai and MCP Inspector can use to authenticate.
+ * SDK v2 no longer ships an OAuth Authorization Server (only resource-server
+ * token verification), so the AS lives here: this module owns clients, codes,
+ * and tokens, while `src/auth/router.ts` exposes the HTTP endpoints.
  *
  * Pre-configured client credentials come from MCP_CLIENT_ID + MCP_CLIENT_SECRET
  * env vars. By default, dynamic client registration (DCR) is disabled — only
  * the pre-configured client can authenticate. Setting MCP_DANGEROUSLY_ALLOW_DCR=true
  * opts into DCR so clients like Cursor and Windsurf, which require DCR, can
  * connect. That mode is intended for local development only.
+ *
+ * The provider implements the SDK v2 `OAuthTokenVerifier` contract
+ * (`verifyAccessToken`), so it plugs directly into `requireBearerAuth`.
  */
 
 import { randomUUID } from 'node:crypto';
-import type { Response } from 'express';
+import { OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server';
 import type {
-  OAuthServerProvider,
-  AuthorizationParams,
-} from '@modelcontextprotocol/sdk/server/auth/provider.js';
-import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
-import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
-import type {
+  AuthInfo,
   OAuthClientInformationFull,
   OAuthTokens,
   OAuthTokenRevocationRequest,
-} from '@modelcontextprotocol/sdk/shared/auth.js';
-import {
-  InvalidRequestError,
-  InvalidTokenError,
-} from '@modelcontextprotocol/sdk/server/auth/errors.js';
+} from '@modelcontextprotocol/server';
 
 // --- Configuration ---
 
@@ -46,6 +40,15 @@ export interface AuthProviderConfig {
    * can obtain a token.
    */
   allowDynamicRegistration?: boolean;
+}
+
+/** Parameters captured from a validated /authorize request. */
+export interface AuthorizationParams {
+  redirectUri: string;
+  codeChallenge: string;
+  state?: string;
+  scopes?: string[];
+  resource?: URL;
 }
 
 // --- Clients Store ---
@@ -72,19 +75,11 @@ const REAPER_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 /**
  * An empty redirect-URI list that reports "registered" for any requested URI.
  *
- * The SDK authorize handler validates the requested redirect_uri against
- * `client.redirect_uris` — via `.includes()` up to SDK 1.28, and via
- * `.some(redirectUriMatches)` since SDK 1.29. Both membership checks are
- * overridden here so the allow-any fallback keeps working across SDK
- * versions. (A Proxy faking only `.includes()` was used before; SDK 1.29's
- * switch to `.some()` iterated the empty backing array and silently rejected
- * every redirect_uri with "Unregistered redirect_uri".)
- *
  * For the pre-configured client we accept any redirect_uri since the real
  * auth gate is the client_secret (verified during token exchange).
  * The list stays empty (`length === 0`), so when a client omits redirect_uri
- * entirely the SDK reports a proper validation error instead of redirecting
- * to `undefined`.
+ * entirely the router reports a proper validation error instead of
+ * redirecting to `undefined`.
  */
 class AllowAnyRedirectUris extends Array<string> {
   override includes(_searchElement: string, _fromIndex?: number): boolean {
@@ -102,34 +97,21 @@ class AllowAnyRedirectUris extends Array<string> {
 const ALLOW_ANY_REDIRECT: string[] = new AllowAnyRedirectUris();
 
 /**
- * In-memory clients store.
- *
- * Always serves the pre-configured client from env vars. When
- * `allowDynamicRegistration` is true, the `registerClient` method is
- * exposed so the SDK advertises `/register` in OAuth metadata and accepts
- * RFC 7591 dynamic registration requests (kept in memory until restart).
- */
-/**
  * Cap on dynamically registered clients to avoid unbounded memory growth when
  * DCR is left enabled in a long-running dev session. FIFO eviction keeps the
- * store bounded; the MCP SDK's per-IP rate limit (20/hr) is the first line of
- * defense, this cap is a backstop.
+ * store bounded; the router's per-IP rate limit is the first line of defense,
+ * this cap is a backstop.
  */
 const MAX_DYNAMIC_CLIENTS = 100;
 
-export class OpenClawClientsStore implements OAuthRegisteredClientsStore {
+export class OpenClawClientsStore {
   private client: OAuthClientInformationFull | undefined;
   private dynamicClients = new Map<string, OAuthClientInformationFull>();
-
-  // Assigned conditionally in the constructor. The MCP SDK probes
-  // `clientsStore.registerClient` at router-setup time and only advertises
-  // `/register` when the property is defined, so we must NOT define a no-op
-  // method on the prototype — it has to be instance-level and gated on config.
-  registerClient?: (
-    client: OAuthClientInformationFull
-  ) => OAuthClientInformationFull | Promise<OAuthClientInformationFull>;
+  readonly allowDynamicRegistration: boolean;
 
   constructor(config: AuthProviderConfig) {
+    this.allowDynamicRegistration = !!config.allowDynamicRegistration;
+
     if (config.clientId && config.clientSecret) {
       const redirectUris: string[] =
         config.redirectUris && config.redirectUris.length > 0
@@ -147,40 +129,42 @@ export class OpenClawClientsStore implements OAuthRegisteredClientsStore {
         client_id_issued_at: Math.floor(Date.now() / 1000),
       };
     }
-
-    if (config.allowDynamicRegistration) {
-      this.registerClient = (client) => {
-        // FIFO eviction when the cap is reached. Map iteration order is
-        // insertion order, so the first key is the oldest entry.
-        if (this.dynamicClients.size >= MAX_DYNAMIC_CLIENTS) {
-          const oldestKey = this.dynamicClients.keys().next().value;
-          if (oldestKey !== undefined) {
-            this.dynamicClients.delete(oldestKey);
-          }
-        }
-        this.dynamicClients.set(client.client_id, client);
-        return client;
-      };
-    }
   }
 
-  async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
+  getClient(clientId: string): OAuthClientInformationFull | undefined {
     if (this.client && this.client.client_id === clientId) {
       return this.client;
     }
     return this.dynamicClients.get(clientId);
+  }
+
+  /** RFC 7591 dynamic registration. Throws unless DCR is enabled. */
+  registerClient(client: OAuthClientInformationFull): OAuthClientInformationFull {
+    if (!this.allowDynamicRegistration) {
+      throw new OAuthError(OAuthErrorCode.InvalidRequest, 'Dynamic registration is disabled');
+    }
+    // FIFO eviction when the cap is reached. Map iteration order is
+    // insertion order, so the first key is the oldest entry.
+    if (this.dynamicClients.size >= MAX_DYNAMIC_CLIENTS) {
+      const oldestKey = this.dynamicClients.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.dynamicClients.delete(oldestKey);
+      }
+    }
+    this.dynamicClients.set(client.client_id, client);
+    return client;
   }
 }
 
 // --- Auth Provider ---
 
 /**
- * OAuth server provider for OpenClaw MCP.
+ * OAuth authorization-server state for OpenClaw MCP.
  *
  * Auto-approves authorization requests (no consent screen) since this
  * is a single-purpose MCP server where the user already controls credentials.
  */
-export class OpenClawAuthProvider implements OAuthServerProvider {
+export class OpenClawAuthProvider {
   readonly clientsStore: OpenClawClientsStore;
 
   private codes = new Map<string, CodeData>();
@@ -226,13 +210,10 @@ export class OpenClawAuthProvider implements OAuthServerProvider {
   }
 
   /**
-   * Auto-approve: generate auth code and redirect immediately.
+   * Auto-approve: issue an auth code and return the redirect URL the
+   * router should send the user-agent to.
    */
-  async authorize(
-    client: OAuthClientInformationFull,
-    params: AuthorizationParams,
-    res: Response
-  ): Promise<void> {
+  authorize(client: OAuthClientInformationFull, params: AuthorizationParams): string {
     const code = randomUUID();
 
     this.codes.set(code, { client, params, createdAt: Date.now() });
@@ -244,36 +225,38 @@ export class OpenClawAuthProvider implements OAuthServerProvider {
 
     const targetUrl = new URL(params.redirectUri);
     targetUrl.search = searchParams.toString();
-    res.redirect(targetUrl.toString());
+    return targetUrl.toString();
   }
 
-  async challengeForAuthorizationCode(
+  /** PKCE challenge recorded for a still-valid authorization code. */
+  challengeForAuthorizationCode(
     _client: OAuthClientInformationFull,
     authorizationCode: string
-  ): Promise<string> {
+  ): string {
     const codeData = this.codes.get(authorizationCode);
     if (!codeData || Date.now() - codeData.createdAt > AUTH_CODE_TTL_MS) {
       if (codeData) this.codes.delete(authorizationCode);
-      throw new InvalidRequestError('Invalid authorization code');
+      throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Invalid authorization code');
     }
     return codeData.params.codeChallenge;
   }
 
-  async exchangeAuthorizationCode(
+  exchangeAuthorizationCode(
     client: OAuthClientInformationFull,
     authorizationCode: string,
-    _codeVerifier?: string,
-    _redirectUri?: string,
     resource?: URL
-  ): Promise<OAuthTokens> {
+  ): OAuthTokens {
     const codeData = this.codes.get(authorizationCode);
     if (!codeData || Date.now() - codeData.createdAt > AUTH_CODE_TTL_MS) {
       if (codeData) this.codes.delete(authorizationCode);
-      throw new InvalidRequestError('Invalid authorization code');
+      throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Invalid authorization code');
     }
 
     if (codeData.client.client_id !== client.client_id) {
-      throw new InvalidRequestError('Authorization code was not issued to this client');
+      throw new OAuthError(
+        OAuthErrorCode.InvalidGrant,
+        'Authorization code was not issued to this client'
+      );
     }
 
     this.codes.delete(authorizationCode);
@@ -306,20 +289,23 @@ export class OpenClawAuthProvider implements OAuthServerProvider {
     };
   }
 
-  async exchangeRefreshToken(
+  exchangeRefreshToken(
     client: OAuthClientInformationFull,
     refreshToken: string,
     scopes?: string[],
     resource?: URL
-  ): Promise<OAuthTokens> {
+  ): OAuthTokens {
     const data = this.refreshTokens.get(refreshToken);
     if (!data || data.expiresAt < Date.now()) {
       if (data) this.refreshTokens.delete(refreshToken);
-      throw new InvalidRequestError('Invalid refresh token');
+      throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Invalid refresh token');
     }
 
     if (data.clientId !== client.client_id) {
-      throw new InvalidRequestError('Refresh token was not issued to this client');
+      throw new OAuthError(
+        OAuthErrorCode.InvalidGrant,
+        'Refresh token was not issued to this client'
+      );
     }
 
     // Revoke old refresh token (rotation)
@@ -353,10 +339,11 @@ export class OpenClawAuthProvider implements OAuthServerProvider {
     };
   }
 
+  /** SDK v2 `OAuthTokenVerifier` contract — plugs into `requireBearerAuth`. */
   async verifyAccessToken(token: string): Promise<AuthInfo> {
     const tokenData = this.tokens.get(token);
     if (!tokenData || tokenData.expiresAt < Date.now()) {
-      throw new InvalidTokenError('Invalid or expired token');
+      throw new OAuthError(OAuthErrorCode.InvalidToken, 'Invalid or expired token');
     }
 
     return {
@@ -368,10 +355,7 @@ export class OpenClawAuthProvider implements OAuthServerProvider {
     };
   }
 
-  async revokeToken(
-    client: OAuthClientInformationFull,
-    request: OAuthTokenRevocationRequest
-  ): Promise<void> {
+  revokeToken(client: OAuthClientInformationFull, request: OAuthTokenRevocationRequest): void {
     // RFC 7009: the token is only revoked if it was issued to the requesting
     // client. Without this check, any authenticated client could revoke any
     // other client's tokens — which becomes exploitable once DCR lets strangers

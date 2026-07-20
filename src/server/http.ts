@@ -1,30 +1,33 @@
 /**
- * HTTP Transport for remote MCP access
+ * HTTP Transport for remote MCP access (SDK v2).
  *
- * Provides a full Express HTTP server with:
- * - Modern Streamable HTTP transport (POST/GET/DELETE /mcp) — primary
- * - Legacy SSE transport (GET /sse + POST /messages) — deprecated, kept for backward compat
- * - OAuth 2.1 authentication via MCP SDK (mcpAuthRouter + requireBearerAuth)
+ * Provides an Express HTTP server with:
+ * - Stateless Streamable HTTP MCP endpoint (ALL /mcp) via createMcpHandler.
+ *   2026-07-28-era clients are served per-request; 2025-era clients fall back
+ *   to the SDK's stateless legacy mode. No sessions — any instance can serve
+ *   any request, so the server works behind a plain load balancer.
+ * - OAuth 2.1 authorization server (src/auth/router.ts) + bearer-gated /mcp
  * - .well-known discovery endpoints for OAuth metadata
  * - CORS support
  * - Health check endpoint
  * - Graceful shutdown
+ *
+ * The legacy HTTP+SSE transport (GET /sse + POST /messages) was removed in
+ * v2.0 — those endpoints now answer 410 Gone with a migration hint.
  */
 
-import { randomUUID } from 'node:crypto';
-import type { IncomingMessage, ServerResponse, Server as HttpServer } from 'node:http';
+import type { Server as HttpServer } from 'node:http';
+import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
-import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
-import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+import { createMcpHandler } from '@modelcontextprotocol/server';
+import { toNodeHandler } from '@modelcontextprotocol/node';
+import { requireBearerAuth } from '@modelcontextprotocol/express';
 
 import { OpenClawAuthProvider, type AuthProviderConfig } from '../auth/provider.js';
+import { createAuthRouter } from '../auth/router.js';
 import { log, logError } from '../utils/logger.js';
-import { createMcpServer, type ToolRegistrationDeps } from './tools-registration.js';
+import { createMcpServer, type ToolRegistrationDeps } from './mcp-server.js';
 
 export interface HttpServerConfig {
   port: number;
@@ -33,8 +36,8 @@ export interface HttpServerConfig {
   issuerUrl?: string;
   /**
    * Express `trust proxy` setting. Required when behind a reverse proxy that
-   * sets `X-Forwarded-For` — otherwise `express-rate-limit` (used by the MCP
-   * SDK auth handlers) throws `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` on `/token`.
+   * sets `X-Forwarded-For` — otherwise `express-rate-limit` (used on the OAuth
+   * endpoints) throws `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` on `/token`.
    * Accepts `true` / `false`, a hop count (e.g. `1`), or an IP/CIDR string or
    * keyword (`loopback`, `linklocal`, `uniquelocal`). Undefined leaves the
    * Express default (`false`) untouched.
@@ -111,22 +114,10 @@ export function isOriginAllowed(origin: string | undefined, allowedOrigins: stri
   });
 }
 
-// --- Session tracking ---
-
-interface LegacySseSession {
-  transport: SSEServerTransport;
-  server: Server;
-}
-
-interface StreamableSession {
-  transport: StreamableHTTPServerTransport;
-  server: Server;
-}
-
 // --- Main server factory ---
 
 /**
- * Create and start the HTTP server with Streamable HTTP + legacy SSE transports.
+ * Create and start the HTTP server with the stateless Streamable HTTP transport.
  */
 export async function createHttpServer(
   config: HttpServerConfig,
@@ -135,16 +126,11 @@ export async function createHttpServer(
   const authEnabled = !!config.authConfig?.clientId;
   const corsConfig = loadCorsConfig();
 
-  // Active sessions
-  const legacySseSessions = new Map<string, LegacySseSession>();
-  const streamableSessions = new Map<string, StreamableSession>();
+  const app = express();
+  // Express 5 exposes query params via the extended parser by default; the
+  // simple parser keeps values as plain strings, matching our validation.
+  app.set('query parser', 'simple');
 
-  // Express app from SDK (includes JSON body parser + DNS rebinding protection)
-  const app = createMcpExpressApp({ host: config.host });
-
-  // Configure Express `trust proxy` when running behind a reverse proxy.
-  // Without this, `express-rate-limit` (used by the MCP SDK auth handlers)
-  // crashes /token with ERR_ERL_UNEXPECTED_X_FORWARDED_FOR.
   if (config.trustProxy !== undefined) {
     app.set('trust proxy', config.trustProxy);
     log(`Trust proxy: ${JSON.stringify(config.trustProxy)}`);
@@ -169,7 +155,9 @@ export async function createHttpServer(
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
       res.setHeader(
         'Access-Control-Allow-Headers',
-        'Content-Type, Authorization, Mcp-Session-Id, mcp-protocol-version'
+        // Mcp-Method / Mcp-Name are required request headers in the
+        // 2026-07-28 Streamable HTTP transport; Mcp-Session-Id is 2025-era.
+        'Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version, Mcp-Method, Mcp-Name'
       );
       res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
     }
@@ -191,15 +179,9 @@ export async function createHttpServer(
       ? new URL(config.issuerUrl)
       : new URL(`http://${config.host === '0.0.0.0' ? 'localhost' : config.host}:${config.port}`);
 
-    // Install OAuth endpoints: /authorize, /token, /register, /revoke
-    // and .well-known discovery metadata
-    app.use(
-      mcpAuthRouter({
-        provider,
-        issuerUrl,
-        scopesSupported: ['mcp:tools'],
-      })
-    );
+    // Authorization-server endpoints: /authorize, /token, /revoke,
+    // /register (DCR opt-in) and .well-known AS metadata
+    app.use(createAuthRouter({ provider, issuerUrl, scopesSupported: ['mcp:tools'] }));
 
     // Protected Resource Metadata (RFC 9728)
     // Tells clients (Inspector, Claude.ai) where the OAuth server is.
@@ -212,7 +194,8 @@ export async function createHttpServer(
       });
     });
 
-    // Bearer auth middleware for protected routes
+    // Bearer auth middleware for protected routes (sets req.auth, which
+    // toNodeHandler forwards to the MCP handler as authInfo).
     authMiddleware = requireBearerAuth({ verifier: provider });
   }
 
@@ -221,132 +204,40 @@ export async function createHttpServer(
     res.json({
       status: 'ok',
       transport: 'streamable-http',
-      legacySseSupported: true,
+      legacySseSupported: false,
       auth: authEnabled,
     });
   });
 
-  // Helper to conditionally apply auth middleware
-  const withAuth = (handler: (req: Request, res: Response) => Promise<void>) => {
-    if (authMiddleware) {
-      return [authMiddleware, async (req: Request, res: Response) => handler(req, res)] as const;
-    }
-    return [async (req: Request, res: Response) => handler(req, res)] as const;
+  // --- MCP endpoint (stateless Streamable HTTP) ---
+
+  const mcpHandler = createMcpHandler(() => createMcpServer(deps), {
+    legacy: 'stateless',
+    onerror: (error) => logError('MCP handler error', error),
+  });
+  const nodeHandler = toNodeHandler(mcpHandler, {
+    onerror: (error) => logError('MCP transport error', error),
+  });
+
+  const mcpRoute = (req: Request, res: Response) => {
+    void nodeHandler(req, res);
   };
 
-  // --- Legacy SSE transport (GET /sse + POST /messages) — deprecated ---
+  if (authMiddleware) {
+    app.all('/mcp', authMiddleware, mcpRoute);
+  } else {
+    app.all('/mcp', mcpRoute);
+  }
 
-  app.get(
-    '/sse',
-    ...withAuth(async (req: Request, res: Response) => {
-      log('Legacy SSE transport is deprecated; prefer Streamable HTTP at /mcp');
-      const transport = new SSEServerTransport('/messages', res as unknown as ServerResponse);
-      const server = createMcpServer(deps);
-
-      const sessionId = transport.sessionId;
-      legacySseSessions.set(sessionId, { transport, server });
-      log(`SSE session connected: ${sessionId}`);
-
-      transport.onclose = () => {
-        legacySseSessions.delete(sessionId);
-        log(`SSE session disconnected: ${sessionId}`);
-      };
-
-      try {
-        await server.connect(transport);
-      } catch (error) {
-        legacySseSessions.delete(sessionId);
-        logError(`Failed to connect SSE session ${sessionId}`, error);
-      }
-    })
-  );
-
-  app.post(
-    '/messages',
-    ...withAuth(async (req: Request, res: Response) => {
-      const sessionId = req.query.sessionId as string;
-      const session = legacySseSessions.get(sessionId);
-
-      if (!session) {
-        res.status(404).json({ error: 'Session not found' });
-        return;
-      }
-
-      try {
-        await session.transport.handlePostMessage(
-          req as unknown as IncomingMessage,
-          res as unknown as ServerResponse,
-          req.body
-        );
-      } catch (error) {
-        logError(`Error handling message for session ${sessionId}`, error);
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Internal server error' });
-        }
-      }
-    })
-  );
-
-  // --- Modern Streamable HTTP transport (ALL /mcp) ---
-
-  const handleStreamableRequest = async (req: Request, res: Response) => {
-    const sessionId = req.headers['mcp-session-id'] as string | undefined;
-
-    if (sessionId && streamableSessions.has(sessionId)) {
-      // Existing session
-      const session = streamableSessions.get(sessionId)!;
-      try {
-        await session.transport.handleRequest(
-          req as unknown as IncomingMessage,
-          res as unknown as ServerResponse,
-          req.body
-        );
-      } catch (error) {
-        logError(`Error in streamable session ${sessionId}`, error);
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Internal server error' });
-        }
-      }
-      return;
-    }
-
-    // New session (initialization request)
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (newSessionId) => {
-        streamableSessions.set(newSessionId, { transport, server });
-        log(`Streamable session initialized: ${newSessionId}`);
-      },
+  // --- Legacy SSE transport: removed in v2.0 ---
+  const legacyGone = (_req: Request, res: Response) => {
+    res.status(410).json({
+      error:
+        'The HTTP+SSE transport was removed in openclaw-mcp 2.0. Connect via /mcp (Streamable HTTP).',
     });
-
-    transport.onclose = () => {
-      const sid = transport.sessionId;
-      if (sid) {
-        streamableSessions.delete(sid);
-        log(`Streamable session closed: ${sid}`);
-      }
-    };
-
-    const server = createMcpServer(deps);
-
-    try {
-      await server.connect(transport);
-      await transport.handleRequest(
-        req as unknown as IncomingMessage,
-        res as unknown as ServerResponse,
-        req.body
-      );
-    } catch (error) {
-      logError('Failed to initialize streamable session', error);
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Internal server error' });
-      }
-    }
   };
-
-  app.get('/mcp', ...withAuth(handleStreamableRequest));
-  app.post('/mcp', ...withAuth(handleStreamableRequest));
-  app.delete('/mcp', ...withAuth(handleStreamableRequest));
+  app.get('/sse', legacyGone);
+  app.post('/messages', legacyGone);
 
   // --- Start server ---
 
@@ -360,7 +251,7 @@ export async function createHttpServer(
       log('Endpoints:');
       log('  GET  /.well-known/oauth-authorization-server          - OAuth metadata');
       log('  GET  /.well-known/oauth-protected-resource/mcp        - Protected resource metadata');
-      log('  POST /authorize                                       - Authorization');
+      log('  GET  /authorize                                       - Authorization');
       log('  POST /token                                           - Token exchange');
     } else {
       log('WARNING: Auth is DISABLED - server is open to anyone!');
@@ -368,9 +259,7 @@ export async function createHttpServer(
 
     log('MCP Endpoints:');
     log('  GET  /health   - Health check (no auth)');
-    log('  ALL  /mcp      - Streamable HTTP (primary)');
-    log('  GET  /sse      - Legacy SSE stream (deprecated)');
-    log('  POST /messages - Legacy SSE messages (deprecated)');
+    log('  ALL  /mcp      - Streamable HTTP (stateless)');
   });
 
   // --- Graceful shutdown ---
@@ -378,25 +267,11 @@ export async function createHttpServer(
   const shutdown = async () => {
     log('Shutting down HTTP server...');
 
-    // Close all legacy SSE sessions
-    for (const [id, session] of legacySseSessions) {
-      try {
-        await session.server.close();
-      } catch (error) {
-        logError(`Error closing SSE session ${id}`, error);
-      }
+    try {
+      await mcpHandler.close();
+    } catch (error) {
+      logError('Error closing MCP handler', error);
     }
-    legacySseSessions.clear();
-
-    // Close all streamable sessions
-    for (const [id, session] of streamableSessions) {
-      try {
-        await session.server.close();
-      } catch (error) {
-        logError(`Error closing streamable session ${id}`, error);
-      }
-    }
-    streamableSessions.clear();
 
     httpServer.close(() => {
       log('HTTP server stopped');
