@@ -319,6 +319,36 @@ describe('Full OAuth flow with pre-configured client', () => {
     expect(location.searchParams.get('code')).toBeNull();
   });
 
+  it('grants the supported scopes when the client omits scope', async () => {
+    // requireBearerAuth enforces mcp:tools, so a token minted without an
+    // explicit scope request must still carry it.
+    const verifier = makeVerifier();
+    const authorizeUrl = new URL(`${baseUrl}/authorize`);
+    authorizeUrl.searchParams.set('response_type', 'code');
+    authorizeUrl.searchParams.set('client_id', CLIENT_ID);
+    authorizeUrl.searchParams.set('redirect_uri', 'https://app.example.com/cb');
+    authorizeUrl.searchParams.set('code_challenge', challengeFor(verifier));
+    authorizeUrl.searchParams.set('code_challenge_method', 'S256');
+
+    const authorizeRes = await fetch(authorizeUrl.toString(), { redirect: 'manual' });
+    const code = new URL(authorizeRes.headers.get('location')!).searchParams.get('code')!;
+
+    const tokenRes = await fetch(`${baseUrl}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        client_id: CLIENT_ID,
+        client_secret: CLIENT_SECRET,
+        code_verifier: verifier,
+        redirect_uri: 'https://app.example.com/cb',
+      }).toString(),
+    });
+    const tokens = (await tokenRes.json()) as any;
+    expect(tokens.scope).toBe('mcp:tools');
+  });
+
   it('preserves an existing query component on the redirect_uri', async () => {
     const authorizeUrl = new URL(`${baseUrl}/authorize`);
     authorizeUrl.searchParams.set('response_type', 'code');

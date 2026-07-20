@@ -40,6 +40,9 @@ import { createMcpServer, type ToolRegistrationDeps } from './mcp-server.js';
  */
 const MCP_MAX_BODY_SIZE = '4mb';
 
+/** How long in-flight requests may finish on their own during shutdown. */
+const DRAIN_GRACE_MS = 3_000;
+
 export interface HttpServerConfig {
   port: number;
   host: string;
@@ -251,6 +254,9 @@ export async function createHttpServer(
     // authorization server straight from the 401 challenge.
     authMiddleware = requireBearerAuth({
       verifier: provider,
+      // Actually enforce the scope the metadata advertises; without this any
+      // non-expired token authorizes every tool call regardless of its grant.
+      requiredScopes: ['mcp:tools'],
       resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(new URL('/mcp', issuerUrl)),
     });
   }
@@ -302,6 +308,25 @@ export async function createHttpServer(
   app.get('/sse', legacyGone);
   app.post('/messages', legacyGone);
 
+  // --- Terminal error handler ---
+  // Body-parser rejections (malformed JSON, payload too large) never reach the
+  // MCP handler's onerror. Without this they fall through to Express's default
+  // finalhandler, which serializes the stack into the response unless
+  // NODE_ENV=production — details that must never leave the server.
+  app.use(
+    (
+      err: Error & { status?: number; statusCode?: number },
+      _req: Request,
+      res: Response,
+      _next: NextFunction
+    ) => {
+      logError('Request error', err);
+      if (res.headersSent) return;
+      const status = err.status ?? err.statusCode ?? 400;
+      res.status(status).json({ error: status === 413 ? 'Payload too large' : 'Bad Request' });
+    }
+  );
+
   // --- Start server ---
 
   const httpServer: HttpServer = app.listen(config.port, config.host, () => {
@@ -342,9 +367,12 @@ export async function createHttpServer(
     }, 5000);
     forceExit.unref?.();
 
-    // Stop accepting first, then abort in-flight exchanges. The reverse order
-    // would kill live requests while the socket still accepts new ones.
-    await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    // `close()` stops accepting new connections synchronously, but its
+    // callback only fires once every existing connection has ended — and an
+    // in-flight MCP exchange holds its connection open. So start the drain
+    // first (to close the door), then abort the transports, then await it.
+    // Awaiting the drain before aborting would deadlock until the force timer.
+    const drained = new Promise<void>((resolve) => httpServer.close(() => resolve()));
 
     try {
       await mcpHandler.close();
@@ -352,6 +380,19 @@ export async function createHttpServer(
       logError('Error closing MCP handler', error);
     }
 
+    // handler.close() only aborts modern per-request exchanges; a legacy-era
+    // request sitting on a slow gateway call keeps its connection open until
+    // its own timeout. Let those finish briefly, then cut them, so a restart
+    // doesn't hang until the force timer and report failure to the supervisor.
+    const cutConnections = setTimeout(() => {
+      log('Draining timed out; closing remaining connections');
+      httpServer.closeAllConnections?.();
+    }, DRAIN_GRACE_MS);
+    cutConnections.unref?.();
+
+    await drained;
+
+    clearTimeout(cutConnections);
     clearTimeout(forceExit);
     log('HTTP server stopped');
     process.exit(0);

@@ -17,8 +17,14 @@ const MAX_DEBUG_BODY_LENGTH = 4096;
  */
 const DEFAULT_MAX_STREAM_MS = 30 * 60 * 1000; // 30 minutes
 
+/**
+ * How long to keep reading after a terminal `finish_reason`, waiting for the
+ * trailing chunk that carries token usage.
+ */
+const FINISH_GRACE_MS = 2_000;
+
 /** Why the internal controller aborted, so a cancel isn't reported as a timeout. */
-type AbortCause = 'idle' | 'max-duration';
+type AbortCause = 'idle' | 'max-duration' | 'finish-grace';
 
 export interface ChatOptions {
   sessionId?: string;
@@ -304,6 +310,24 @@ export class OpenClawClient {
       abortCause = 'max-duration';
       controller.abort();
     }, this.maxStreamMs);
+    /**
+     * After finish_reason the answer is complete; wait only briefly for the
+     * trailing usage chunk rather than the full idle timeout.
+     */
+    const startFinishGrace = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        abortCause = 'finish-grace';
+        controller.abort();
+      }, FINISH_GRACE_MS);
+    };
+
+    // Hoisted so the catch can still return a completed answer if the grace
+    // window below expires before the trailing chunk arrives.
+    let accumulated = '';
+    let model: string | undefined;
+    let usage: OpenClawChatResponse['usage'];
+    let finishReason: string | null | undefined;
 
     try {
       const response = await fetch(url, {
@@ -326,10 +350,6 @@ export class OpenClawClient {
 
       const decoder = new TextDecoder();
       let buffer = '';
-      let accumulated = '';
-      let model: string | undefined;
-      let usage: OpenClawChatResponse['usage'];
-      let finishReason: string | null | undefined;
       let receivedBytes = 0;
       let done = false;
 
@@ -358,7 +378,12 @@ export class OpenClawClient {
         }
 
         if (chunk.model) model = chunk.model;
-        if (chunk.usage) usage = chunk.usage;
+        if (chunk.usage) {
+          usage = chunk.usage;
+          // usage rides in a trailing chunk after finish_reason; once we have
+          // both there is nothing left worth waiting for.
+          if (finishReason) return true;
+        }
 
         const choice = chunk.choices?.[0];
         const delta = choice?.delta?.content;
@@ -367,11 +392,14 @@ export class OpenClawClient {
           onDelta(delta, accumulated);
         }
 
-        // A terminal finish_reason means the answer is complete; don't wait
-        // for [DONE], which a buffering proxy may never deliver.
+        // A terminal finish_reason means the answer itself is complete. Don't
+        // wait out the full idle timeout for [DONE] (a buffering proxy may
+        // never send it) — but do allow a short grace window for the trailing
+        // usage chunk, which arrives after finish_reason.
         if (choice?.finish_reason) {
           finishReason = choice.finish_reason;
-          return true;
+          if (usage) return true;
+          startFinishGrace();
         }
         return false;
       };
@@ -438,6 +466,12 @@ export class OpenClawClient {
     } catch (error) {
       if (error instanceof OpenClawApiError) {
         throw error;
+      }
+      // The grace window expiring is not a failure: the answer was already
+      // complete, only the optional trailing usage chunk never arrived.
+      if (abortCause === 'finish-grace' && finishReason) {
+        logDebug(() => `Stream complete without trailing usage (${accumulated.length} chars)`);
+        return { response: accumulated, model, usage };
       }
       throw this.toConnectionError(error, abortCause, signal);
     } finally {

@@ -322,7 +322,9 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         redirectUri,
         codeChallenge,
         state: firstString(req.query.state),
-        scopes: requestedScopes,
+        // Clients that omit `scope` get the full supported set, so the
+        // resource server can require a scope without breaking them.
+        scopes: requestedScopes ?? [...scopesSupported],
         resource,
       };
 

@@ -375,6 +375,19 @@ describe('OpenClawClient', () => {
       expect(result.response).toBe('Hello world');
     });
 
+    it('captures the trailing usage chunk that follows finish_reason', async () => {
+      mockStreamResponse([
+        'data: {"choices":[{"delta":{"content":"hi"}}]}\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n',
+        'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}\n',
+        'data: [DONE]\n',
+      ]);
+
+      const result = await client.chat('hi', { onDelta: () => {} });
+      expect(result.response).toBe('hi');
+      expect(result.usage?.total_tokens).toBe(4);
+    });
+
     it('stops at a terminal finish_reason without waiting for [DONE]', async () => {
       // A buffering proxy may hold the socket open after the answer is done;
       // finish_reason is the signal that nothing more is coming.
