@@ -210,7 +210,7 @@ You're running behind a reverse proxy but haven't set `MCP_ISSUER_URL`. The OAut
 
 ### `POST /` or `GET /` returns 404 after OAuth succeeds
 
-Your Claude.ai connector URL is missing the `/mcp` path. The MCP Streamable HTTP transport is mounted at `/mcp`, not at the server root (which is intentional — root is reserved for `/health`, `/.well-known/*`, OAuth endpoints, and legacy SSE endpoints). Update the connector URL in Claude.ai to end with `/mcp`, e.g. `https://mcp.your-domain.com/mcp`.
+Your Claude.ai connector URL is missing the `/mcp` path. The MCP Streamable HTTP transport is mounted at `/mcp`, not at the server root (which is intentional — root is reserved for `/health`, `/.well-known/*`, and OAuth endpoints). Update the connector URL in Claude.ai to end with `/mcp`, e.g. `https://mcp.your-domain.com/mcp`.
 
 ### `invalid_request` / `Unregistered redirect_uri` on `/authorize`
 

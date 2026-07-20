@@ -271,15 +271,13 @@ See [Configuration](docs/configuration.md) for all security options.
 
 ## Migrating from SSE to HTTP transport
 
-Starting with v1.5.0, the primary transport is **Streamable HTTP** (`--transport http`). The legacy SSE transport (`--transport sse`) is deprecated but still works for backward compatibility.
+**The legacy SSE transport was removed in v2.0.** `--transport sse` now exits with an error, and `GET /sse` / `POST /messages` answer `410 Gone`. Use Streamable HTTP:
 
-### What changed
-
-| Before | After |
+| Before (≤ 1.x) | After (2.0) |
 |--------|-------|
-| `--transport sse` | `--transport http` (recommended) |
-| Primary endpoint: `GET /sse` | Primary endpoint: `POST/GET/DELETE /mcp` |
-| Health: `"transport": "sse"` | Health: `"transport": "streamable-http"` |
+| `--transport sse` | `--transport http` |
+| Endpoint: `GET /sse` + `POST /messages` | Endpoint: `ALL /mcp` |
+| Health: `"legacySseSupported": true` | Health: `"legacySseSupported": false` |
 
 ### Migration steps
 
@@ -293,11 +291,9 @@ Starting with v1.5.0, the primary transport is **Streamable HTTP** (`--transport
 
 2. **Claude.ai connector URL**: No change needed — Claude.ai already uses `/mcp` (Streamable HTTP)
 
-3. **Legacy clients**: The `/sse` and `/messages` endpoints still work. A deprecation warning is logged on each SSE connection.
+3. **Legacy clients**: Any client that only speaks HTTP+SSE must be upgraded. The MCP specification deprecated that transport in 2025-03-26 and removed it in 2026-07-28.
 
-4. **Dockerfile ENTRYPOINT**: Updated automatically if using the official Docker image
-
-> **Note:** `--transport sse` will continue to work as a deprecated alias. Both transports are served simultaneously regardless of which flag you use.
+> **Note on protocol versions:** 2.0 runs on MCP SDK v2 and is stateless — it no longer keeps per-connection sessions. Clients still speaking the 2025-11-25 protocol (including current Claude.ai and Claude Desktop) are served through the SDK's built-in stateless legacy path and need no changes.
 
 ## Roadmap — v2.0 (in development)
 
