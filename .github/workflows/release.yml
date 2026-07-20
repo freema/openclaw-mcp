@@ -90,8 +90,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # --ref is required: without it the dispatch runs against the default
+      # branch, which publishes whatever version main happens to be on rather
+      # than the tag being released. (This only ever worked because releases
+      # were tagged from main, so the two versions coincided.)
+      # The release event itself cannot be relied on here — events raised with
+      # GITHUB_TOKEN do not trigger further workflow runs.
       - name: Trigger npm publish
-        run: gh workflow run publish.yml
+        run: gh workflow run publish.yml --ref "${GITHUB_REF_NAME}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -99,6 +105,6 @@ jobs:
       # prerelease must not replace the stable entry.
       - name: Trigger MCP Registry publish
         if: steps.version.outputs.PRERELEASE != 'true'
-        run: gh workflow run publish-mcp-registry.yml
+        run: gh workflow run publish-mcp-registry.yml --ref "${GITHUB_REF_NAME}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
