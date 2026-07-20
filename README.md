@@ -301,14 +301,22 @@ Starting with v1.5.0, the primary transport is **Streamable HTTP** (`--transport
 
 ## Roadmap — v2.0 (in development)
 
-Version 2.0 is being developed on the `v2` branch, targeting the [MCP 2026-07-28 specification](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/) and the new MCP SDK v2 (`@modelcontextprotocol/server`). Planned changes:
+Version 2.0 is being developed on the `v2` branch, targeting the [MCP 2026-07-28 specification](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/) on MCP SDK v2 (`@modelcontextprotocol/server`).
 
-- **Stateless protocol core** — no sessions, no `initialize` handshake; runs behind any load balancer without sticky routing
-- **Protocol-native Tasks** (`io.modelcontextprotocol/tasks` extension) — replaces the custom async task tools (`openclaw_chat_async`, `openclaw_task_status`, `openclaw_task_list`, `openclaw_task_cancel`) with standard `tasks/get` polling
-- **Streaming to the gateway** — `stream: true` on `/v1/chat/completions` for live progress tracking (fixes [#31](https://github.com/freema/openclaw-mcp/issues/31)) and concurrent task processing
-- **Modern auth** — Client ID Metadata Documents replace Dynamic Client Registration (the `MCP_DANGEROUSLY_ALLOW_DCR` escape hatch goes away)
-- **Structured tool outputs** (`outputSchema` + `structuredContent`) and tool icons
-- **Legacy SSE transport removed** (deprecated since spec 2025-03-26)
+Done on the `v2` branch:
+
+- **Stateless protocol core** — no sessions; any instance can serve any request, so the server runs behind a plain load balancer. 2025-era clients (current Claude.ai / Claude Desktop) are served through the SDK's built-in legacy fallback.
+- **Streaming to the gateway** — async tasks use `stream: true` with an idle timeout (resets on every chunk), live progress (`progress_chars`), configurable concurrency (`OPENCLAW_TASK_CONCURRENCY`), and cancellation of running tasks (fixes [#31](https://github.com/freema/openclaw-mcp/issues/31))
+- **Own OAuth 2.1 authorization server** — SDK v2 is resource-server-only, so `/authorize`, `/token`, `/revoke`, `/register` and RFC 8414 metadata are implemented in-repo (PKCE S256, timing-safe client auth, refresh rotation, rate limiting)
+- **zod v4 tool schemas** (JSON Schema 2020-12) and tool annotations
+- **Legacy SSE transport removed** — `/sse` and `/messages` answer 410 Gone
+
+Planned before 2.0.0 final:
+
+- **Structured tool outputs** (`outputSchema` + `structuredContent`)
+- **Client ID Metadata Documents** as the successor to Dynamic Client Registration
+- **Protocol-native Tasks** (`io.modelcontextprotocol/tasks` extension) — will replace the custom async task tools once the SDK ships a tasks runtime (v2.0.0-beta.4 defines only the wire vocabulary)
+- Docs refresh + migration guide from 1.x
 
 v1.x remains the stable release until 2.0 ships.
 
