@@ -278,4 +278,91 @@ describe('OpenClawClient', () => {
       await expect(client.chat('test')).rejects.toThrow(/10MB/);
     });
   });
+
+  describe('chat (streaming)', () => {
+    function sseStream(chunks: string[]): ReadableStream<Uint8Array> {
+      const encoder = new TextEncoder();
+      return new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(encoder.encode(chunk));
+          }
+          controller.close();
+        },
+      });
+    }
+
+    function mockStreamResponse(chunks: string[]) {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        headers: { get: () => null },
+        body: sseStream(chunks),
+      });
+    }
+
+    it('sets stream:true and accumulates deltas via onDelta', async () => {
+      mockStreamResponse([
+        'data: {"model":"openclaw","choices":[{"delta":{"content":"Hel"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n',
+        'data: {"choices":[{"delta":{}}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}\n\n',
+        'data: [DONE]\n\n',
+      ]);
+
+      const deltas: string[] = [];
+      const result = await client.chat('hi', {
+        onDelta: (delta) => deltas.push(delta),
+      });
+
+      const requestBody = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
+      expect(requestBody.stream).toBe(true);
+      expect(deltas).toEqual(['Hel', 'lo']);
+      expect(result.response).toBe('Hello');
+      expect(result.model).toBe('openclaw');
+      expect(result.usage?.total_tokens).toBe(3);
+    });
+
+    it('handles SSE lines split across reads', async () => {
+      mockStreamResponse([
+        'data: {"choices":[{"delta":{"con',
+        'tent":"AB"}}]}\ndata: {"choices":[{"delta":{"content":"C"}}]}\n',
+        'data: [DONE]\n',
+      ]);
+
+      const result = await client.chat('hi', { onDelta: () => {} });
+      expect(result.response).toBe('ABC');
+    });
+
+    it('skips unparseable SSE lines without failing', async () => {
+      mockStreamResponse([
+        'data: not-json\n',
+        ': keepalive comment\n',
+        'data: {"choices":[{"delta":{"content":"ok"}}]}\n',
+        'data: [DONE]\n',
+      ]);
+
+      const result = await client.chat('hi', { onDelta: () => {} });
+      expect(result.response).toBe('ok');
+    });
+
+    it('throws OpenClawApiError on non-2xx streaming response', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: false,
+        status: 502,
+        statusText: 'Bad Gateway',
+        headers: { get: () => null },
+        body: null,
+      });
+
+      await expect(client.chat('hi', { onDelta: () => {} })).rejects.toThrow(OpenClawApiError);
+    });
+
+    it('completes when the stream ends without [DONE]', async () => {
+      mockStreamResponse(['data: {"choices":[{"delta":{"content":"partial"}}]}\n']);
+
+      const result = await client.chat('hi', { onDelta: () => {} });
+      expect(result.response).toBe('partial');
+    });
+  });
 });
