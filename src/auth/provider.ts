@@ -65,6 +65,16 @@ interface TokenData {
   scopes: string[];
   expiresAt: number;
   resource?: URL;
+  /** Grant family: revoking any token kills every token minted from it. */
+  grantId: string;
+}
+
+interface RefreshTokenData {
+  clientId: string;
+  scopes: string[];
+  expiresAt: number;
+  resource?: URL;
+  grantId: string;
 }
 
 const TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
@@ -169,10 +179,7 @@ export class OpenClawAuthProvider {
 
   private codes = new Map<string, CodeData>();
   private tokens = new Map<string, TokenData>();
-  private refreshTokens = new Map<
-    string,
-    { clientId: string; scopes: string[]; expiresAt: number; resource?: URL }
-  >();
+  private refreshTokens = new Map<string, RefreshTokenData>();
   private reaperInterval: ReturnType<typeof setInterval> | undefined;
 
   constructor(config: AuthProviderConfig) {
@@ -218,27 +225,52 @@ export class OpenClawAuthProvider {
 
     this.codes.set(code, { client, params, createdAt: Date.now() });
 
-    const searchParams = new URLSearchParams({ code });
-    if (params.state !== undefined) {
-      searchParams.set('state', params.state);
-    }
-
+    // RFC 6749 §3.1.2: the registered URI may carry its own query component,
+    // which must survive. Assigning `.search` would drop it.
     const targetUrl = new URL(params.redirectUri);
-    targetUrl.search = searchParams.toString();
+    targetUrl.searchParams.set('code', code);
+    if (params.state !== undefined) {
+      targetUrl.searchParams.set('state', params.state);
+    }
     return targetUrl.toString();
   }
 
   /** PKCE challenge recorded for a still-valid authorization code. */
   challengeForAuthorizationCode(
-    _client: OAuthClientInformationFull,
+    client: OAuthClientInformationFull,
     authorizationCode: string
   ): string {
+    return this.getAuthorizationGrant(client, authorizationCode).codeChallenge;
+  }
+
+  /**
+   * The authorize-time parameters a code was issued with, for the checks the
+   * token endpoint has to make before redeeming it.
+   */
+  getAuthorizationGrant(
+    client: OAuthClientInformationFull,
+    authorizationCode: string
+  ): AuthorizationParams {
     const codeData = this.codes.get(authorizationCode);
     if (!codeData || Date.now() - codeData.createdAt > AUTH_CODE_TTL_MS) {
       if (codeData) this.codes.delete(authorizationCode);
       throw new OAuthError(OAuthErrorCode.InvalidGrant, 'Invalid authorization code');
     }
-    return codeData.params.codeChallenge;
+    if (codeData.client.client_id !== client.client_id) {
+      throw new OAuthError(
+        OAuthErrorCode.InvalidGrant,
+        'Authorization code was not issued to this client'
+      );
+    }
+    return codeData.params;
+  }
+
+  /**
+   * Drop a code without redeeming it. Used when a redemption attempt looks
+   * like an attack (bad PKCE verifier, mismatched redirect_uri).
+   */
+  invalidateAuthorizationCode(authorizationCode: string): void {
+    this.codes.delete(authorizationCode);
   }
 
   exchangeAuthorizationCode(
@@ -263,21 +295,27 @@ export class OpenClawAuthProvider {
 
     const accessToken = randomUUID();
     const refreshToken = randomUUID();
+    const grantId = randomUUID();
     const scopes = codeData.params.scopes || [];
+    // RFC 8707: the audience is fixed at authorization time. A token request
+    // may not widen it, so the authorize-time value wins when both are set.
+    const grantResource = codeData.params.resource ?? resource;
 
     this.tokens.set(accessToken, {
       token: accessToken,
       clientId: client.client_id,
       scopes,
       expiresAt: Date.now() + TOKEN_TTL_MS,
-      resource: resource || codeData.params.resource,
+      resource: grantResource,
+      grantId,
     });
 
     this.refreshTokens.set(refreshToken, {
       clientId: client.client_id,
       scopes,
       expiresAt: Date.now() + REFRESH_TOKEN_TTL_MS,
-      resource: resource || codeData.params.resource,
+      resource: grantResource,
+      grantId,
     });
 
     return {
@@ -308,26 +346,43 @@ export class OpenClawAuthProvider {
       );
     }
 
+    // RFC 6749 §6: a refresh may narrow the granted scopes but never widen
+    // them. Without this check any refresh-token holder could self-escalate.
+    let tokenScopes = data.scopes;
+    if (scopes && scopes.length > 0) {
+      const escalated = scopes.filter((scope) => !data.scopes.includes(scope));
+      if (escalated.length > 0) {
+        throw new OAuthError(
+          OAuthErrorCode.InvalidScope,
+          `Requested scope exceeds the original grant: ${escalated.join(' ')}`
+        );
+      }
+      tokenScopes = scopes;
+    }
+
     // Revoke old refresh token (rotation)
     this.refreshTokens.delete(refreshToken);
 
     const accessToken = randomUUID();
     const newRefreshToken = randomUUID();
-    const tokenScopes = scopes || data.scopes;
+    // The audience stays bound to the original grant.
+    const grantResource = data.resource ?? resource;
 
     this.tokens.set(accessToken, {
       token: accessToken,
       clientId: client.client_id,
       scopes: tokenScopes,
       expiresAt: Date.now() + TOKEN_TTL_MS,
-      resource: resource || data.resource,
+      resource: grantResource,
+      grantId: data.grantId,
     });
 
     this.refreshTokens.set(newRefreshToken, {
       clientId: client.client_id,
       scopes: tokenScopes,
       expiresAt: Date.now() + REFRESH_TOKEN_TTL_MS,
-      resource: resource || data.resource,
+      resource: grantResource,
+      grantId: data.grantId,
     });
 
     return {
@@ -361,13 +416,30 @@ export class OpenClawAuthProvider {
     // other client's tokens — which becomes exploitable once DCR lets strangers
     // obtain a valid client_id/secret pair.
     const tokenData = this.tokens.get(request.token);
-    if (tokenData && tokenData.clientId === client.client_id) {
-      this.tokens.delete(request.token);
-    }
-
     const refreshData = this.refreshTokens.get(request.token);
-    if (refreshData && refreshData.clientId === client.client_id) {
-      this.refreshTokens.delete(request.token);
+
+    const grantId =
+      tokenData && tokenData.clientId === client.client_id
+        ? tokenData.grantId
+        : refreshData && refreshData.clientId === client.client_id
+          ? refreshData.grantId
+          : undefined;
+
+    if (grantId === undefined) return;
+
+    // Revoke the whole grant family. Dropping only the presented token would
+    // leave its sibling refresh token minting fresh access tokens, so an
+    // operator reacting to a leak would have revoked nothing.
+    this.revokeGrant(grantId);
+  }
+
+  /** Drop every access and refresh token minted from one authorization. */
+  private revokeGrant(grantId: string): void {
+    for (const [token, data] of this.tokens) {
+      if (data.grantId === grantId) this.tokens.delete(token);
+    }
+    for (const [token, data] of this.refreshTokens) {
+      if (data.grantId === grantId) this.refreshTokens.delete(token);
     }
   }
 }

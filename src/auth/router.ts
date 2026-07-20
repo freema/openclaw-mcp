@@ -63,6 +63,11 @@ function verifyPkce(codeVerifier: string, codeChallenge: string): boolean {
   return timingSafeStringEqual(computed, codeChallenge);
 }
 
+/** RFC 7636 §4.1: 43-128 characters from the unreserved set. */
+export function isValidPkceValue(value: string): boolean {
+  return /^[A-Za-z0-9\-._~]{43,128}$/.test(value);
+}
+
 function firstString(value: unknown): string | undefined {
   if (typeof value === 'string') return value;
   if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
@@ -93,13 +98,24 @@ function authenticateClient(
 
   const authHeader = req.headers.authorization;
   if (authHeader?.startsWith('Basic ')) {
+    // RFC 6749 §2.3.1 encodes both halves as application/x-www-form-urlencoded,
+    // where `+` means space — decodeURIComponent alone would mangle that.
+    const formDecode = (value: string) => decodeURIComponent(value.replace(/\+/g, ' '));
+    let decoded: string;
     try {
-      const decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf8');
-      const separator = decoded.indexOf(':');
-      if (separator !== -1) {
-        clientId = decodeURIComponent(decoded.slice(0, separator));
-        clientSecret = decodeURIComponent(decoded.slice(separator + 1));
-      }
+      decoded = Buffer.from(authHeader.slice(6), 'base64').toString('utf8');
+    } catch {
+      throw new OAuthError(OAuthErrorCode.InvalidClient, 'Malformed Basic authorization header');
+    }
+    const separator = decoded.indexOf(':');
+    if (separator === -1) {
+      // Falling through to body credentials here would make the credential
+      // source ambiguous; a malformed header is an error.
+      throw new OAuthError(OAuthErrorCode.InvalidClient, 'Malformed Basic authorization header');
+    }
+    try {
+      clientId = formDecode(decoded.slice(0, separator));
+      clientSecret = formDecode(decoded.slice(separator + 1));
     } catch {
       throw new OAuthError(OAuthErrorCode.InvalidClient, 'Malformed Basic authorization header');
     }
@@ -123,10 +139,56 @@ function authenticateClient(
   return client;
 }
 
+function isLoopbackHost(hostname: string): boolean {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '[::1]' ||
+    hostname === '::1'
+  );
+}
+
+/**
+ * Schemes we are willing to redirect a live authorization code to.
+ *
+ * The allow-any fallback (no MCP_REDIRECT_URIS) still must not turn the
+ * server into a redirect gadget for `javascript:` / `data:` / `file:` URIs,
+ * nor hand codes to plaintext HTTP outside loopback.
+ */
+export function isSafeRedirectScheme(url: URL): boolean {
+  if (url.protocol === 'https:') return true;
+  if (url.protocol === 'http:') return isLoopbackHost(url.hostname);
+  return false;
+}
+
 function isRedirectUriAllowed(client: OAuthClientInformationFull, redirectUri: string): boolean {
   const uris = client.redirect_uris;
   if (!uris) return false;
-  return uris.some((registered) => registered === redirectUri);
+  if (uris.some((registered) => registered === redirectUri)) return true;
+
+  // RFC 8252 §7.3: native clients use an ephemeral loopback port, so the port
+  // is ignored when everything else about a registered loopback URI matches.
+  let requested: URL;
+  try {
+    requested = new URL(redirectUri);
+  } catch {
+    return false;
+  }
+  if (!isLoopbackHost(requested.hostname)) return false;
+
+  return uris.some((registered) => {
+    try {
+      const candidate = new URL(registered);
+      return (
+        isLoopbackHost(candidate.hostname) &&
+        candidate.protocol === requested.protocol &&
+        candidate.hostname === requested.hostname &&
+        candidate.pathname === requested.pathname
+      );
+    } catch {
+      return false;
+    }
+  });
 }
 
 export function createAuthRouter(options: AuthRouterOptions): Router {
@@ -135,18 +197,20 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
   const issuer = issuerUrl.toString().replace(/\/$/, '');
   const router = Router();
 
-  const authLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000,
-    limit: 100,
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
-  const registerLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000,
-    limit: 20,
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
+  // One limiter instance per endpoint. Sharing a single instance would let an
+  // unauthenticated flood of /authorize requests exhaust the budget for
+  // /token and /revoke, denying service to a legitimate client.
+  const makeLimiter = (limit: number) =>
+    rateLimit({
+      windowMs: 60 * 60 * 1000,
+      limit,
+      standardHeaders: true,
+      legacyHeaders: false,
+    });
+  const authorizeLimiter = makeLimiter(100);
+  const tokenLimiter = makeLimiter(100);
+  const revokeLimiter = makeLimiter(100);
+  const registerLimiter = makeLimiter(20);
 
   // --- RFC 8414 Authorization Server metadata ---
   router.get('/.well-known/oauth-authorization-server', (_req, res) => {
@@ -168,7 +232,7 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
   });
 
   // --- Authorization endpoint (auto-approve) ---
-  router.get('/authorize', authLimiter, (req, res) => {
+  router.get('/authorize', authorizeLimiter, (req, res) => {
     try {
       const clientId = firstString(req.query.client_id);
       if (!clientId) {
@@ -183,11 +247,18 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
       if (!redirectUri) {
         throw new OAuthError(OAuthErrorCode.InvalidRequest, 'Missing redirect_uri');
       }
+      let parsedRedirect: URL;
       try {
         // Must be an absolute URI before we agree to redirect anywhere.
-        new URL(redirectUri);
+        parsedRedirect = new URL(redirectUri);
       } catch {
         throw new OAuthError(OAuthErrorCode.InvalidRequest, 'Invalid redirect_uri');
+      }
+      if (!isSafeRedirectScheme(parsedRedirect)) {
+        throw new OAuthError(
+          OAuthErrorCode.InvalidRequest,
+          'redirect_uri must use https, or http on loopback'
+        );
       }
       if (!isRedirectUriAllowed(client, redirectUri)) {
         throw new OAuthError(OAuthErrorCode.InvalidRequest, 'Unregistered redirect_uri');
@@ -215,6 +286,13 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         redirectError(OAuthErrorCode.InvalidRequest, 'code_challenge is required (PKCE)');
         return;
       }
+      if (!isValidPkceValue(codeChallenge)) {
+        redirectError(
+          OAuthErrorCode.InvalidRequest,
+          'code_challenge must be 43-128 characters (RFC 7636)'
+        );
+        return;
+      }
       const challengeMethod = firstString(req.query.code_challenge_method) ?? 'S256';
       if (challengeMethod !== 'S256') {
         redirectError(OAuthErrorCode.InvalidRequest, 'code_challenge_method must be S256');
@@ -229,11 +307,22 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         return;
       }
 
+      // Only scopes this server actually advertises may be granted; otherwise
+      // a token can carry arbitrary claims that later scope checks would trust.
+      const requestedScopes = firstString(req.query.scope)?.split(' ').filter(Boolean);
+      if (requestedScopes) {
+        const unknown = requestedScopes.filter((scope) => !scopesSupported.includes(scope));
+        if (unknown.length > 0) {
+          redirectError(OAuthErrorCode.InvalidScope, `Unsupported scope: ${unknown.join(' ')}`);
+          return;
+        }
+      }
+
       const params: AuthorizationParams = {
         redirectUri,
         codeChallenge,
         state: firstString(req.query.state),
-        scopes: firstString(req.query.scope)?.split(' ').filter(Boolean),
+        scopes: requestedScopes,
         resource,
       };
 
@@ -244,7 +333,7 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
   });
 
   // --- Token endpoint ---
-  router.post('/token', authLimiter, urlencoded({ extended: false }), (req, res) => {
+  router.post('/token', tokenLimiter, urlencoded({ extended: false }), (req, res) => {
     try {
       const client = authenticateClient(provider, req);
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -260,9 +349,31 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         if (!codeVerifier) {
           throw new OAuthError(OAuthErrorCode.InvalidRequest, 'Missing code_verifier (PKCE)');
         }
+        if (!isValidPkceValue(codeVerifier)) {
+          provider.invalidateAuthorizationCode(code);
+          throw new OAuthError(
+            OAuthErrorCode.InvalidGrant,
+            'code_verifier must be 43-128 characters (RFC 7636)'
+          );
+        }
 
-        const challenge = provider.challengeForAuthorizationCode(client, code);
-        if (!verifyPkce(codeVerifier, challenge)) {
+        // RFC 6749 §4.1.3: redirect_uri must be repeated and identical.
+        const grant = provider.getAuthorizationGrant(client, code);
+        const presentedRedirectUri = firstString(body.redirect_uri);
+        if (presentedRedirectUri !== grant.redirectUri) {
+          // A mismatch means the code is being redeemed for a different
+          // callback than it was issued for — treat it as compromised.
+          provider.invalidateAuthorizationCode(code);
+          throw new OAuthError(
+            OAuthErrorCode.InvalidGrant,
+            'redirect_uri does not match the authorization request'
+          );
+        }
+
+        if (!verifyPkce(codeVerifier, grant.codeChallenge)) {
+          // OAuth 2.1: a failed PKCE check is the signature of a stolen or
+          // injected code. Burn it instead of allowing unlimited retries.
+          provider.invalidateAuthorizationCode(code);
           throw new OAuthError(OAuthErrorCode.InvalidGrant, 'PKCE verification failed');
         }
 
@@ -287,7 +398,7 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
   });
 
   // --- RFC 7009 revocation ---
-  router.post('/revoke', authLimiter, urlencoded({ extended: false }), (req, res) => {
+  router.post('/revoke', revokeLimiter, urlencoded({ extended: false }), (req, res) => {
     try {
       const client = authenticateClient(provider, req);
       const token = firstString((req.body as Record<string, unknown>)?.token);
@@ -319,10 +430,19 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
           );
         }
         for (const uri of redirectUris as string[]) {
+          let parsed: URL;
           try {
-            new URL(uri);
+            parsed = new URL(uri);
           } catch {
             throw new OAuthError(OAuthErrorCode.InvalidRequest, `Invalid redirect_uri: ${uri}`);
+          }
+          // A stored javascript:/data: URI would make /authorize a persistent
+          // redirect gadget on this server's own origin.
+          if (!isSafeRedirectScheme(parsed)) {
+            throw new OAuthError(
+              OAuthErrorCode.InvalidRequest,
+              `redirect_uri must use https, or http on loopback: ${uri}`
+            );
           }
         }
 

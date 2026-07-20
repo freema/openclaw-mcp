@@ -264,6 +264,98 @@ describe('OpenClawAuthProvider', () => {
     );
   });
 
+  it('rejects a refresh that widens the granted scopes', async () => {
+    const provider = new OpenClawAuthProvider(config);
+    const client = (await provider.clientsStore.getClient('test-client'))!;
+
+    const redirectUrl = provider.authorize(client, {
+      codeChallenge: 'ch',
+      redirectUri: 'http://localhost/cb',
+      scopes: ['mcp:tools'],
+    });
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+    const tokens = provider.exchangeAuthorizationCode(client, code);
+
+    expect(() =>
+      provider.exchangeRefreshToken(client, tokens.refresh_token!, [
+        'mcp:tools',
+        'admin:everything',
+      ])
+    ).toThrow(/exceeds the original grant/);
+
+    // Narrowing is still allowed.
+    const narrowed = provider.exchangeRefreshToken(client, tokens.refresh_token!, []);
+    expect(narrowed.scope).toBe('mcp:tools');
+  });
+
+  it('revoking either token kills the whole grant family', async () => {
+    const provider = new OpenClawAuthProvider(config);
+    const client = (await provider.clientsStore.getClient('test-client'))!;
+
+    const redirectUrl = provider.authorize(client, {
+      codeChallenge: 'ch',
+      redirectUri: 'http://localhost/cb',
+      scopes: ['mcp:tools'],
+    });
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+    const tokens = provider.exchangeAuthorizationCode(client, code);
+
+    // Revoke the access token — the paired refresh token must die with it,
+    // otherwise it keeps minting fresh access tokens after a leak.
+    provider.revokeToken(client, { token: tokens.access_token });
+
+    await expect(provider.verifyAccessToken(tokens.access_token)).rejects.toThrow();
+    expect(() => provider.exchangeRefreshToken(client, tokens.refresh_token!)).toThrow(
+      'Invalid refresh token'
+    );
+  });
+
+  it('revoking a rotated refresh token kills the tokens it produced', async () => {
+    const provider = new OpenClawAuthProvider(config);
+    const client = (await provider.clientsStore.getClient('test-client'))!;
+
+    const redirectUrl = provider.authorize(client, {
+      codeChallenge: 'ch',
+      redirectUri: 'http://localhost/cb',
+    });
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+    const first = provider.exchangeAuthorizationCode(client, code);
+    const second = provider.exchangeRefreshToken(client, first.refresh_token!);
+
+    // Rotation keeps the same grant, so revoking the new refresh token must
+    // also invalidate the access token issued alongside it.
+    provider.revokeToken(client, { token: second.refresh_token! });
+    await expect(provider.verifyAccessToken(second.access_token)).rejects.toThrow();
+  });
+
+  it('does not let the token endpoint widen the audience set at authorize time', async () => {
+    const provider = new OpenClawAuthProvider(config);
+    const client = (await provider.clientsStore.getClient('test-client'))!;
+
+    const redirectUrl = provider.authorize(client, {
+      codeChallenge: 'ch',
+      redirectUri: 'http://localhost/cb',
+      resource: new URL('https://mcp.example.com/mcp'),
+    });
+    const code = new URL(redirectUrl).searchParams.get('code')!;
+    provider.exchangeAuthorizationCode(client, code, new URL('https://other.example.com/'));
+
+    const info = await provider.verifyAccessToken(
+      // re-derive: the token just minted is the only one in the store
+      (() => {
+        const url = provider.authorize(client, {
+          codeChallenge: 'ch2',
+          redirectUri: 'http://localhost/cb',
+          resource: new URL('https://mcp.example.com/mcp'),
+        });
+        const c = new URL(url).searchParams.get('code')!;
+        return provider.exchangeAuthorizationCode(client, c, new URL('https://other.example.com/'))
+          .access_token;
+      })()
+    );
+    expect(info.resource?.toString()).toBe('https://mcp.example.com/mcp');
+  });
+
   it('does not revoke tokens owned by another client', async () => {
     const provider = new OpenClawAuthProvider(config);
     const client = (await provider.clientsStore.getClient('test-client'))!;
