@@ -10,6 +10,15 @@ import type {
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 const MAX_DEBUG_BODY_LENGTH = 4096;
+/**
+ * Hard ceiling on a streamed request. The idle timeout alone is not enough:
+ * a gateway that emits heartbeats forever would otherwise hold a task slot
+ * for the lifetime of the process.
+ */
+const DEFAULT_MAX_STREAM_MS = 30 * 60 * 1000; // 30 minutes
+
+/** Why the internal controller aborted, so a cancel isn't reported as a timeout. */
+type AbortCause = 'idle' | 'max-duration';
 
 export interface ChatOptions {
   sessionId?: string;
@@ -18,10 +27,18 @@ export interface ChatOptions {
   /**
    * Called with each streamed content delta. When set, the request uses
    * `stream: true` and the timeout becomes an idle timeout: it resets on every
-   * received chunk, so long-running gateway work doesn't hit the absolute
-   * timeout as long as the stream stays alive.
+   * received chunk, so long-running gateway work doesn't hit the timeout as
+   * long as the stream stays alive. A separate absolute cap still applies.
    */
   onDelta?: (delta: string, accumulated: string) => void;
+}
+
+/** Raised when the caller's own AbortSignal stopped the request. */
+export class OpenClawCancelledError extends Error {
+  constructor(message = 'Request was cancelled') {
+    super(message);
+    this.name = 'OpenClawCancelledError';
+  }
 }
 
 export class OpenClawClient {
@@ -29,17 +46,20 @@ export class OpenClawClient {
   private gatewayToken: string | undefined;
   private timeoutMs: number;
   private model: string;
+  private maxStreamMs: number;
 
   constructor(
     baseUrl: string,
     gatewayToken?: string,
     timeoutMs: number = DEFAULT_TIMEOUT_MS,
-    model: string = 'openclaw'
+    model: string = 'openclaw',
+    maxStreamMs: number = DEFAULT_MAX_STREAM_MS
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
     this.gatewayToken = gatewayToken;
     this.timeoutMs = timeoutMs;
     this.model = model;
+    this.maxStreamMs = Math.max(maxStreamMs, timeoutMs);
   }
 
   private buildHeaders(): Record<string, string> {
@@ -72,8 +92,21 @@ export class OpenClawClient {
     return () => signal.removeEventListener('abort', onAbort);
   }
 
-  private toConnectionError(error: unknown): OpenClawConnectionError {
+  /**
+   * Classify an aborted request. The caller's signal wins: only when the
+   * external signal is the one that fired do we report a cancellation —
+   * otherwise the abort came from our own timers.
+   */
+  private toConnectionError(error: unknown, cause?: AbortCause, callerSignal?: AbortSignal): Error {
     if (error instanceof DOMException && error.name === 'AbortError') {
+      if (callerSignal?.aborted && cause === undefined) {
+        return new OpenClawCancelledError();
+      }
+      if (cause === 'max-duration') {
+        return new OpenClawConnectionError(
+          `Request to OpenClaw exceeded the maximum duration of ${this.maxStreamMs}ms`
+        );
+      }
       return new OpenClawConnectionError(`Request to OpenClaw timed out after ${this.timeoutMs}ms`);
     }
     return new OpenClawConnectionError(
@@ -91,7 +124,11 @@ export class OpenClawClient {
 
     const controller = new AbortController();
     const unlink = this.linkSignal(controller, options.signal ?? undefined);
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    let abortCause: AbortCause | undefined;
+    const timeout = setTimeout(() => {
+      abortCause = 'idle';
+      controller.abort();
+    }, this.timeoutMs);
 
     try {
       const response = await fetch(url, {
@@ -139,7 +176,7 @@ export class OpenClawClient {
       if (error instanceof OpenClawApiError) {
         throw error;
       }
-      throw this.toConnectionError(error);
+      throw this.toConnectionError(error, abortCause, options.signal ?? undefined);
     } finally {
       clearTimeout(timeout);
       unlink();
@@ -156,7 +193,11 @@ export class OpenClawClient {
     const url = `${this.baseUrl}/v1/chat/completions`;
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    let abortCause: AbortCause | undefined;
+    const timeout = setTimeout(() => {
+      abortCause = 'idle';
+      controller.abort();
+    }, this.timeoutMs);
 
     try {
       const response = await fetch(url, {
@@ -177,7 +218,7 @@ export class OpenClawClient {
 
       return { status: 'error', message: `Gateway error (HTTP ${response.status})` };
     } catch (error) {
-      throw this.toConnectionError(error);
+      throw this.toConnectionError(error, abortCause);
     } finally {
       clearTimeout(timeout);
     }
@@ -207,6 +248,11 @@ export class OpenClawClient {
     const headers: Record<string, string> = {};
     if (sessionId) {
       headers['x-openclaw-session-key'] = sessionId;
+    }
+    if (streaming) {
+      // Without this a strict gateway may answer with a plain JSON body,
+      // which the SSE reader would decode as an empty response.
+      headers['Accept'] = 'text/event-stream';
     }
 
     if (!streaming) {
@@ -239,13 +285,25 @@ export class OpenClawClient {
 
     const controller = new AbortController();
     const unlink = this.linkSignal(controller, signal);
+    let abortCause: AbortCause | undefined;
     // Idle timeout: reset on every received chunk, so slow-but-alive gateway
     // work is not killed while a silent/dead connection still aborts.
-    let idleTimer = setTimeout(() => controller.abort(), this.timeoutMs);
+    let idleTimer = setTimeout(() => {
+      abortCause = 'idle';
+      controller.abort();
+    }, this.timeoutMs);
     const resetIdle = () => {
       clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => controller.abort(), this.timeoutMs);
+      idleTimer = setTimeout(() => {
+        abortCause = 'idle';
+        controller.abort();
+      }, this.timeoutMs);
     };
+    // Absolute cap: heartbeats alone must not keep a task slot forever.
+    const maxTimer = setTimeout(() => {
+      abortCause = 'max-duration';
+      controller.abort();
+    }, this.maxStreamMs);
 
     try {
       const response = await fetch(url, {
@@ -271,7 +329,61 @@ export class OpenClawClient {
       let accumulated = '';
       let model: string | undefined;
       let usage: OpenClawChatResponse['usage'];
+      let finishReason: string | null | undefined;
+      let receivedBytes = 0;
       let done = false;
+
+      /** Handle one SSE line. Returns true when the stream is terminated. */
+      const handleLine = (rawLine: string): boolean => {
+        const line = rawLine.trim();
+        if (!line.startsWith('data:')) return false;
+
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') return true;
+
+        let chunk: OpenAIChatCompletionChunk;
+        try {
+          chunk = JSON.parse(payload) as OpenAIChatCompletionChunk;
+        } catch {
+          logDebug(() => `Skipping unparseable SSE line: ${this.truncateForLog(payload)}`);
+          return false;
+        }
+
+        // Gateways can report a failure mid-stream after a 200 response.
+        if (chunk.error) {
+          throw new OpenClawApiError(
+            `Gateway reported an error: ${chunk.error.message ?? 'unknown error'}`,
+            502
+          );
+        }
+
+        if (chunk.model) model = chunk.model;
+        if (chunk.usage) usage = chunk.usage;
+
+        const choice = chunk.choices?.[0];
+        const delta = choice?.delta?.content;
+        if (delta) {
+          accumulated += delta;
+          onDelta(delta, accumulated);
+        }
+
+        // A terminal finish_reason means the answer is complete; don't wait
+        // for [DONE], which a buffering proxy may never deliver.
+        if (choice?.finish_reason) {
+          finishReason = choice.finish_reason;
+          return true;
+        }
+        return false;
+      };
+
+      /** Split on LF or CR (both are valid SSE terminators). */
+      const nextBreak = (s: string): number => {
+        const lf = s.indexOf('\n');
+        const cr = s.indexOf('\r');
+        if (lf === -1) return cr;
+        if (cr === -1) return lf;
+        return Math.min(lf, cr);
+      };
 
       const reader = response.body.getReader();
       try {
@@ -280,42 +392,30 @@ export class OpenClawClient {
           if (readerDone) break;
           resetIdle();
 
-          buffer += decoder.decode(value, { stream: true });
-          if (buffer.length + accumulated.length > MAX_RESPONSE_SIZE_BYTES) {
+          receivedBytes += value.byteLength;
+          if (receivedBytes > MAX_RESPONSE_SIZE_BYTES) {
             throw new OpenClawApiError('Response exceeds maximum allowed size (10MB)', 413);
           }
 
-          let newlineIndex;
-          while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
-            const line = buffer.slice(0, newlineIndex).trim();
-            buffer = buffer.slice(newlineIndex + 1);
+          buffer += decoder.decode(value, { stream: true });
 
-            if (!line.startsWith('data:')) continue;
-            const payload = line.slice(5).trim();
-            if (payload === '[DONE]') {
+          let breakIndex;
+          while ((breakIndex = nextBreak(buffer)) !== -1) {
+            const line = buffer.slice(0, breakIndex);
+            buffer = buffer.slice(breakIndex + 1);
+            if (handleLine(line)) {
               done = true;
               break;
             }
+          }
+        }
 
-            let chunk: OpenAIChatCompletionChunk;
-            try {
-              chunk = JSON.parse(payload) as OpenAIChatCompletionChunk;
-            } catch {
-              logDebug(() => `Skipping unparseable SSE line: ${this.truncateForLog(payload)}`);
-              continue;
-            }
-
-            if (chunk.model) model = chunk.model;
-            if (chunk.usage) usage = chunk.usage;
-
-            const delta = chunk.choices?.[0]?.delta?.content;
-            if (delta) {
-              accumulated += delta;
-              if (accumulated.length > MAX_RESPONSE_SIZE_BYTES) {
-                throw new OpenClawApiError('Response exceeds maximum allowed size (10MB)', 413);
-              }
-              onDelta(delta, accumulated);
-            }
+        // Flush the decoder and parse a trailing line that arrived without a
+        // terminator — otherwise the last event would be silently dropped.
+        if (!done) {
+          buffer += decoder.decode();
+          if (buffer.trim()) {
+            handleLine(buffer);
           }
         }
       } finally {
@@ -323,15 +423,26 @@ export class OpenClawClient {
         await reader.cancel().catch(() => {});
       }
 
-      logDebug(() => `Stream complete (${accumulated.length} chars)`);
+      if (!accumulated && !finishReason) {
+        // No content and no terminal marker: the body was not a usable SSE
+        // stream. Reporting an empty success here would silently hand the
+        // caller a blank answer.
+        throw new OpenClawApiError(
+          'Gateway returned no streamed content (not a valid SSE response)',
+          502
+        );
+      }
+
+      logDebug(() => `Stream complete (${accumulated.length} chars, finish=${finishReason})`);
       return { response: accumulated, model, usage };
     } catch (error) {
       if (error instanceof OpenClawApiError) {
         throw error;
       }
-      throw this.toConnectionError(error);
+      throw this.toConnectionError(error, abortCause, signal);
     } finally {
       clearTimeout(idleTimer);
+      clearTimeout(maxTimer);
       unlink();
     }
   }

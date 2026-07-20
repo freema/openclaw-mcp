@@ -60,6 +60,12 @@ async function processTask(task: Task, registry: InstanceRegistry): Promise<void
         taskManager.updateProgress(task.id, accumulated.length);
       },
     });
+    // A cancel can land between the gateway resolving and this line; the
+    // cancelled status must win, otherwise the caller is told the task was
+    // cancelled and then sees it complete.
+    if (taskManager.get(task.id)?.status === 'cancelled') {
+      return;
+    }
     taskManager.updateStatus(task.id, 'completed', response.response);
   } catch (error) {
     // A cancel aborts the request; don't overwrite the cancelled status.

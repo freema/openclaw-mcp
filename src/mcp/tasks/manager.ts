@@ -132,6 +132,10 @@ class TaskManager {
 
     if (status === 'running' && !task.startedAt) {
       task.startedAt = new Date();
+      // Seed progress immediately so a running task always reports liveness,
+      // even before the first content delta arrives.
+      task.progressChars = 0;
+      task.lastActivityAt = task.startedAt;
     }
 
     if (status === 'completed' || status === 'failed' || status === 'cancelled') {
@@ -150,13 +154,16 @@ class TaskManager {
   }
 
   /**
-   * Record streaming progress for a running task
+   * Record streaming progress for a running task. Pass no character count to
+   * record liveness only (a heartbeat with no new content).
    */
-  updateProgress(id: string, progressChars: number): boolean {
+  updateProgress(id: string, progressChars?: number): boolean {
     const task = this.tasks.get(id);
     if (!task || task.status !== 'running') return false;
 
-    task.progressChars = progressChars;
+    if (progressChars !== undefined) {
+      task.progressChars = progressChars;
+    }
     task.lastActivityAt = new Date();
     return true;
   }

@@ -49,6 +49,12 @@ export interface OpenAIChatCompletionChunk {
     completion_tokens: number;
     total_tokens: number;
   };
+  /** Some gateways report a mid-stream failure after a 200 response. */
+  error?: {
+    message?: string;
+    type?: string;
+    code?: string;
+  };
 }
 
 // MCP-facing types (facade over OpenAI response)
