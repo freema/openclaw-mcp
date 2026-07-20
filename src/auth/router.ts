@@ -309,7 +309,10 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
 
       // Only scopes this server actually advertises may be granted; otherwise
       // a token can carry arbitrary claims that later scope checks would trust.
-      const requestedScopes = firstString(req.query.scope)?.split(' ').filter(Boolean);
+      // An empty or whitespace-only `scope=` counts as "not requested" — the
+      // alternative is a token with no scopes that every call then 403s on.
+      const parsedScopes = firstString(req.query.scope)?.split(' ').filter(Boolean);
+      const requestedScopes = parsedScopes && parsedScopes.length > 0 ? parsedScopes : undefined;
       if (requestedScopes) {
         const unknown = requestedScopes.filter((scope) => !scopesSupported.includes(scope));
         if (unknown.length > 0) {
