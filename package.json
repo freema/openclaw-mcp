@@ -40,7 +40,9 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/node": "^2.0.0-beta.4",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/server": "^2.0.0-beta.4",
     "yargs": "^17.7.2"
   },
   "devDependencies": {
