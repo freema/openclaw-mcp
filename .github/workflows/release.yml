@@ -49,7 +49,17 @@ jobs:
 
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          # Prereleases (2.0.0-beta.1) must not move the `latest` tag that
+          # production deployments pull.
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            echo "PRERELEASE=true" >> $GITHUB_OUTPUT
+            echo "DOCKER_TAGS=ghcr.io/freema/openclaw-mcp:${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          else
+            echo "PRERELEASE=false" >> $GITHUB_OUTPUT
+            printf 'DOCKER_TAGS<<EOF\nghcr.io/freema/openclaw-mcp:latest\nghcr.io/freema/openclaw-mcp:%s\nEOF\n' "${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -57,9 +67,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/freema/openclaw-mcp:latest
-            ghcr.io/freema/openclaw-mcp:${{ steps.version.outputs.VERSION }}
+          tags: ${{ steps.version.outputs.DOCKER_TAGS }}
           build-args: |
             VERSION=${{ steps.version.outputs.VERSION }}
           cache-from: type=gha
@@ -70,6 +78,7 @@ jobs:
         with:
           files: openclaw-mcp-${{ github.ref_name }}.tar.gz
           generate_release_notes: true
+          prerelease: ${{ steps.version.outputs.PRERELEASE == 'true' }}
           body: |
             ## Docker image
 
@@ -86,7 +95,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # The registry lists a single current version per server, so a
+      # prerelease must not replace the stable entry.
       - name: Trigger MCP Registry publish
+        if: steps.version.outputs.PRERELEASE != 'true'
         run: gh workflow run publish-mcp-registry.yml
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

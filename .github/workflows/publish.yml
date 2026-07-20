@@ -40,6 +40,14 @@ jobs:
           npm run build
 
       - name: Publish
-        run: npm publish --access public --provenance
+        run: |
+          # Prereleases go under the `beta` dist-tag so `npm i openclaw-mcp`
+          # keeps resolving to the latest stable release.
+          VERSION=$(node -p "require('./package.json').version")
+          if [[ "$VERSION" == *-* ]]; then
+            npm publish --access public --provenance --tag beta
+          else
+            npm publish --access public --provenance
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
