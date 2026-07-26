@@ -3,7 +3,18 @@
  *
  * Manages background tasks with status tracking, allowing
  * long-running operations to be started and polled for results.
+ *
+ * Ownership
+ * ---------
+ * The manager is a process-wide singleton, but in HTTP mode a single process
+ * serves many independent MCP connections. Every task is therefore tagged with
+ * the `ownerId` of the connection that created it, and every read/write path
+ * reachable from a tool handler requires that same `ownerId`. A caller can
+ * never observe or mutate a task belonging to another connection, even when it
+ * knows (or guesses) the task ID.
  */
+
+import { randomUUID } from 'node:crypto';
 
 import { log } from '../../utils/logger.js';
 
@@ -23,6 +34,8 @@ export interface Task {
   createdAt: Date;
   startedAt?: Date;
   completedAt?: Date;
+  /** Connection that owns this task. Never exposed to clients. */
+  ownerId: string;
   sessionId?: string;
   instanceId?: string;
   priority: number;
@@ -31,6 +44,8 @@ export interface Task {
 export interface TaskCreateOptions {
   type: 'chat';
   input: unknown;
+  /** Connection creating the task — required, see "Ownership" above. */
+  ownerId: string;
   sessionId?: string;
   instanceId?: string;
   priority?: number;
@@ -38,7 +53,6 @@ export interface TaskCreateOptions {
 
 class TaskManager {
   private tasks: Map<string, Task> = new Map();
-  private taskCounter = 0;
   private cleanupInterval: ReturnType<typeof setInterval> | undefined;
 
   constructor() {
@@ -49,17 +63,18 @@ class TaskManager {
   }
 
   /**
-   * Generate unique task ID
+   * Generate an unguessable task ID.
+   *
+   * Deliberately not sequential: a predictable counter would let a caller
+   * enumerate IDs and probe for tasks it does not own. Ownership checks are
+   * the real defence, this just removes the oracle.
    */
   private generateId(): string {
-    this.taskCounter++;
-    const timestamp = Date.now().toString(36);
-    const counter = this.taskCounter.toString(36).padStart(4, '0');
-    return `task_${timestamp}_${counter}`;
+    return `task_${randomUUID()}`;
   }
 
   /**
-   * Create a new task
+   * Create a new task owned by `options.ownerId`.
    */
   create(options: TaskCreateOptions): Task {
     if (this.tasks.size >= MAX_TASKS) {
@@ -75,6 +90,7 @@ class TaskManager {
       status: 'pending',
       input: options.input,
       createdAt: new Date(),
+      ownerId: options.ownerId,
       sessionId: options.sessionId,
       instanceId: options.instanceId,
       priority: options.priority ?? 0,
@@ -86,17 +102,25 @@ class TaskManager {
   }
 
   /**
-   * Get task by ID
+   * Get a task by ID, but only if `ownerId` owns it.
+   *
+   * Returns undefined both for unknown IDs and for tasks owned by someone
+   * else, so callers cannot distinguish the two.
    */
-  get(id: string): Task | undefined {
-    return this.tasks.get(id);
+  get(id: string, ownerId: string): Task | undefined {
+    const task = this.tasks.get(id);
+    if (!task || task.ownerId !== ownerId) return undefined;
+    return task;
   }
 
   /**
-   * List all tasks, optionally filtered by status
+   * List the tasks owned by `ownerId`, optionally filtered further.
    */
-  list(filter?: { status?: TaskStatus; sessionId?: string; instanceId?: string }): Task[] {
-    let tasks = Array.from(this.tasks.values());
+  list(
+    ownerId: string,
+    filter?: { status?: TaskStatus; sessionId?: string; instanceId?: string }
+  ): Task[] {
+    let tasks = Array.from(this.tasks.values()).filter((t) => t.ownerId === ownerId);
 
     if (filter?.status) {
       tasks = tasks.filter((t) => t.status === filter.status);
@@ -116,7 +140,10 @@ class TaskManager {
   }
 
   /**
-   * Update task status
+   * Update task status.
+   *
+   * Internal worker path only — never reachable from a tool handler, so it
+   * takes no ownerId.
    */
   updateStatus(id: string, status: TaskStatus, result?: string, error?: string): boolean {
     const task = this.tasks.get(id);
@@ -140,10 +167,10 @@ class TaskManager {
   }
 
   /**
-   * Cancel a pending task
+   * Cancel a pending task owned by `ownerId`.
    */
-  cancel(id: string): boolean {
-    const task = this.tasks.get(id);
+  cancel(id: string, ownerId: string): boolean {
+    const task = this.get(id, ownerId);
     if (!task) return false;
 
     if (task.status !== 'pending') {
@@ -157,17 +184,25 @@ class TaskManager {
   }
 
   /**
-   * Delete a task (cleanup)
+   * Delete a task (cleanup). Internal only.
    */
   delete(id: string): boolean {
     return this.tasks.delete(id);
   }
 
   /**
-   * Get next pending task (for workers)
+   * Get next pending task across all owners (for the background worker).
+   *
+   * Internal only — the worker has to see every queue, which is exactly why
+   * tool handlers must go through the owner-scoped methods instead.
    */
   getNextPending(): Task | undefined {
-    const pending = this.list({ status: 'pending' });
+    const pending = Array.from(this.tasks.values())
+      .filter((t) => t.status === 'pending')
+      .sort((a, b) => {
+        if (b.priority !== a.priority) return b.priority - a.priority;
+        return a.createdAt.getTime() - b.createdAt.getTime();
+      });
     return pending[0];
   }
 
@@ -192,9 +227,12 @@ class TaskManager {
   }
 
   /**
-   * Get statistics
+   * Get statistics for the tasks owned by `ownerId`.
+   *
+   * Scoped like everything else: a global total would leak how busy other
+   * connections are.
    */
-  stats(): { total: number; byStatus: Record<TaskStatus, number> } {
+  stats(ownerId: string): { total: number; byStatus: Record<TaskStatus, number> } {
     const byStatus: Record<TaskStatus, number> = {
       pending: 0,
       running: 0,
@@ -203,14 +241,14 @@ class TaskManager {
       cancelled: 0,
     };
 
+    let total = 0;
     for (const task of this.tasks.values()) {
+      if (task.ownerId !== ownerId) continue;
       byStatus[task.status]++;
+      total++;
     }
 
-    return {
-      total: this.tasks.size,
-      byStatus,
-    };
+    return { total, byStatus };
   }
 }
 
