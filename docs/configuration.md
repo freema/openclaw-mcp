@@ -123,17 +123,24 @@ When `TRUST_PROXY` is unset and a reverse proxy injects an `X-Forwarded-For` hea
 
 ### CORS Configuration
 
-| Variable       | Description                       | Default |
-| -------------- | --------------------------------- | ------- |
-| `CORS_ORIGINS` | Allowed origins (comma-separated) | `*`     |
+| Variable       | Description                       | Default            |
+| -------------- | --------------------------------- | ------------------ |
+| `CORS_ORIGINS` | Allowed origins (comma-separated) | _(CORS disabled)_  |
+
+CORS is **off unless you opt in**. With it off the server sends no
+`Access-Control-Allow-Origin` header, so browsers refuse cross-origin calls to
+it. Non-browser clients — Claude.ai, Claude Desktop, and anything speaking
+stdio — are unaffected; set this only when a web page has to reach the server
+directly.
 
 **CORS_ORIGINS examples:**
 
-- `*` — Allow all origins (not recommended for production)
-- `none` — Disable CORS entirely
+- _(unset)_ or `none` — CORS disabled (default)
 - `https://claude.ai` — Single origin
 - `https://claude.ai,https://your-app.com` — Multiple origins
 - `*.example.com` — Wildcard subdomain
+- `*` — Allow all origins. Lets any web page drive this server through a
+  visitor's browser; do not use in production.
 
 ### Authentication (OAuth 2.1)
 
