@@ -19,16 +19,18 @@ export class OpenClawClient {
 
   constructor(
     baseUrl: string,
-    gatewayToken?: string,
-    agentId?: string,
-    timeoutMs: number = DEFAULT_TIMEOUT_MS,
-    model: string = 'openclaw'
+    options: {
+      gatewayToken?: string;
+      agentId?: string;
+      timeoutMs?: number;
+      model?: string;
+    } = {}
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
-    this.gatewayToken = gatewayToken;
-    this.agentId = agentId;
-    this.timeoutMs = timeoutMs;
-    this.model = model;
+    this.gatewayToken = options.gatewayToken;
+    this.agentId = options.agentId;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.model = options.model ?? 'openclaw';
   }
 
   private buildHeaders(): Record<string, string> {

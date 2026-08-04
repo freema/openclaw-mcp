@@ -9,7 +9,7 @@ describe('OpenClawClient', () => {
   beforeEach(() => {
     fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
-    client = new OpenClawClient('https://openclaw.example.com', 'test-token');
+    client = new OpenClawClient('https://openclaw.example.com', { gatewayToken: 'test-token' });
   });
 
   afterEach(() => {
@@ -85,12 +85,7 @@ describe('OpenClawClient', () => {
       const abortError = new DOMException('The operation was aborted', 'AbortError');
       fetchSpy.mockRejectedValue(abortError);
 
-      const fastClient = new OpenClawClient(
-        'https://openclaw.example.com',
-        undefined,
-        undefined,
-        100
-      );
+      const fastClient = new OpenClawClient('https://openclaw.example.com', { timeoutMs: 100 });
       await expect(fastClient.health()).rejects.toThrow(OpenClawConnectionError);
       await expect(fastClient.health()).rejects.toThrow(/timed out/);
     });
@@ -139,13 +134,11 @@ describe('OpenClawClient', () => {
     });
 
     it('uses custom model from constructor', async () => {
-      const customClient = new OpenClawClient(
-        'https://openclaw.example.com',
-        'test-token',
-        undefined,
-        120_000,
-        'openclaw/my-agent'
-      );
+      const customClient = new OpenClawClient('https://openclaw.example.com', {
+        gatewayToken: 'test-token',
+        timeoutMs: 120_000,
+        model: 'openclaw/my-agent',
+      });
       const openaiResponse = {
         id: 'chatcmpl-custom',
         object: 'chat.completion',
@@ -224,11 +217,10 @@ describe('OpenClawClient', () => {
     });
 
     it('sends x-openclaw-agent-id header when agentId is set', async () => {
-      const agentClient = new OpenClawClient(
-        'https://openclaw.example.com',
-        'test-token',
-        'agent-1'
-      );
+      const agentClient = new OpenClawClient('https://openclaw.example.com', {
+        gatewayToken: 'test-token',
+        agentId: 'agent-1',
+      });
       const openaiResponse = {
         id: 'chatcmpl-agent',
         object: 'chat.completion',
@@ -294,12 +286,7 @@ describe('OpenClawClient', () => {
       const abortError = new DOMException('The operation was aborted', 'AbortError');
       fetchSpy.mockRejectedValue(abortError);
 
-      const fastClient = new OpenClawClient(
-        'https://openclaw.example.com',
-        undefined,
-        undefined,
-        100
-      );
+      const fastClient = new OpenClawClient('https://openclaw.example.com', { timeoutMs: 100 });
       await expect(fastClient.chat('test')).rejects.toThrow(OpenClawConnectionError);
       await expect(fastClient.chat('test')).rejects.toThrow(/timed out/);
     });

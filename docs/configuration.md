@@ -10,8 +10,13 @@ All configuration can be done via environment variables. Copy `.env.example` to 
 | ------------------------ | --------------------------------------- | ------------------------ |
 | `OPENCLAW_URL`           | OpenClaw gateway URL                    | `http://127.0.0.1:18789` |
 | `OPENCLAW_GATEWAY_TOKEN` | Bearer token for gateway authentication | (none)                   |
+| `OPENCLAW_AGENT_ID`      | Named agent to route requests to        | (none)                   |
 | `OPENCLAW_TIMEOUT_MS`    | Request timeout in milliseconds         | `120000` (2 min)         |
 | `OPENCLAW_MODEL`         | Model name for chat completions         | `openclaw`               |
+
+`OPENCLAW_AGENT_ID` is sent as the `x-openclaw-agent-id` header. When unset, the gateway uses its default agent.
+
+> **Note:** How the gateway handles an unrecognized `OPENCLAW_AGENT_ID` (reject vs. silently fall back to the default agent) depends on your gateway version/configuration. If you set this, verify against your gateway's behavior — a typo could otherwise route requests somewhere unexpected with no error.
 
 ### Multi-Instance Mode
 
@@ -53,8 +58,11 @@ Each instance object supports:
 | `name`    | string  | Yes      | Unique instance name (1-64 chars, alphanumeric/dashes/underscores)       |
 | `url`     | string  | Yes      | OpenClaw gateway URL (http or https only)                                |
 | `token`   | string  | No       | Bearer token for gateway authentication                                  |
+| `agentId` | string  | No       | Named agent to route requests to on this instance's gateway              |
 | `timeout` | number  | No       | Request timeout in ms (inherits global `OPENCLAW_TIMEOUT_MS` if omitted) |
 | `default` | boolean | No       | Mark as the default instance (first instance is default if none marked)  |
+
+`agentId` is sent as the `x-openclaw-agent-id` header. When omitted, the gateway uses its default agent.
 
 **Using instances in tools:**
 
