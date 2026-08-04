@@ -55,6 +55,7 @@ services:
       - MCP_CLIENT_ID=openclaw
       - MCP_CLIENT_SECRET=${MCP_CLIENT_SECRET}
       - MCP_ISSUER_URL=${MCP_ISSUER_URL:-}
+      - MCP_REDIRECT_URIS=https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback
       - TRUST_PROXY=1
       - CORS_ORIGINS=https://claude.ai
     extra_hosts:
@@ -117,6 +118,8 @@ AUTH_ENABLED=true MCP_CLIENT_ID=openclaw MCP_CLIENT_SECRET=your-secret \
 > - `MCP_ISSUER_URL` (or `--issuer-url`) to your public HTTPS URL — otherwise OAuth metadata advertises `http://localhost:3000` and clients fail to authenticate.
 > - `TRUST_PROXY=1` (or `--trust-proxy 1`) — otherwise `express-rate-limit` rejects the proxy's `X-Forwarded-For` header and `/token` crashes with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`.
 
+> **Recommended:** Set `MCP_REDIRECT_URIS=https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback` so authorization codes can only be delivered to Claude's callbacks. Note the exact `/api/mcp/auth_callback` path — matching is exact, and getting it wrong fails OAuth with `Unregistered redirect_uri` (see [Troubleshooting](docs/deployment.md#invalid_request--unregistered-redirect_uri-on-authorize)).
+
 See [Installation Guide](docs/installation.md) for details.
 
 ## Architecture
@@ -160,8 +163,14 @@ See [Installation Guide](docs/installation.md) for details.
 |------|-------------|
 | `openclaw_chat_async` | Queue a message, get task_id immediately |
 | `openclaw_task_status` | Check task progress and get results |
-| `openclaw_task_list` | List all tasks with filtering |
+| `openclaw_task_list` | List your tasks with filtering |
 | `openclaw_task_cancel` | Cancel a pending task |
+
+Tasks are scoped to the MCP connection that created them. In HTTP mode, where
+one process serves many clients, a client can only see and cancel its own
+tasks — another client's `task_id` reads as "not found" even if it is known.
+Reconnecting starts a fresh scope, so poll a task on the connection that
+queued it.
 
 ## Multi-Instance Mode
 
@@ -260,13 +269,27 @@ AUTH_ENABLED=true MCP_CLIENT_ID=openclaw MCP_CLIENT_SECRET=$MCP_CLIENT_SECRET \
   openclaw-mcp --transport http
 ```
 
-Configure CORS to restrict access:
+CORS is disabled unless you opt in. Set `CORS_ORIGINS` only when a browser
+client needs to reach the server directly:
 
 ```bash
 CORS_ORIGINS=https://claude.ai,https://your-app.com
 ```
 
 See [Configuration](docs/configuration.md) for all security options.
+
+### Upgrading to 1.7.0
+
+Two defaults changed for security. Both only affect HTTP mode; stdio is
+unchanged.
+
+- **CORS is now off by default.** Previously an unset `CORS_ORIGINS` sent
+  `Access-Control-Allow-Origin: *`. If a browser client depends on that, set
+  the origins explicitly (`CORS_ORIGINS=https://your-app.com`), or
+  `CORS_ORIGINS=*` to restore the old behaviour.
+- **Async tasks are scoped to the connection that created them.** A client
+  that used to poll a `task_id` queued by a different connection will now get
+  "not found".
 
 ## Migrating from SSE to HTTP transport
 

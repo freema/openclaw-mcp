@@ -6,6 +6,8 @@
  * that registration logic into a reusable function.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
@@ -49,6 +51,14 @@ export function createMcpServer(deps: ToolRegistrationDeps): Server {
 function registerTools(server: Server, deps: ToolRegistrationDeps): void {
   const { registry } = deps;
 
+  // Identity of this MCP connection, used to scope async tasks.
+  //
+  // In stdio mode there is exactly one Server for the process lifetime, so
+  // behaviour is unchanged. In HTTP mode createMcpServer() is called once per
+  // connection, so each client gets its own namespace and cannot reach another
+  // client's tasks.
+  const ownerId = randomUUID();
+
   const toolHandlers = new Map<
     string,
     (
@@ -57,10 +67,10 @@ function registerTools(server: Server, deps: ToolRegistrationDeps): void {
   >([
     ['openclaw_chat', (input) => tools.handleOpenclawChat(registry, input)],
     ['openclaw_status', (input) => tools.handleOpenclawStatus(registry, input)],
-    ['openclaw_chat_async', (input) => tools.handleOpenclawChatAsync(registry, input)],
-    ['openclaw_task_status', (input) => tools.handleOpenclawTaskStatus(registry, input)],
-    ['openclaw_task_list', (input) => tools.handleOpenclawTaskList(registry, input)],
-    ['openclaw_task_cancel', (input) => tools.handleOpenclawTaskCancel(registry, input)],
+    ['openclaw_chat_async', (input) => tools.handleOpenclawChatAsync(registry, input, ownerId)],
+    ['openclaw_task_status', (input) => tools.handleOpenclawTaskStatus(registry, input, ownerId)],
+    ['openclaw_task_list', (input) => tools.handleOpenclawTaskList(registry, input, ownerId)],
+    ['openclaw_task_cancel', (input) => tools.handleOpenclawTaskCancel(registry, input, ownerId)],
     ['openclaw_instances', (input) => tools.handleOpenclawInstances(registry, input)],
   ]);
 

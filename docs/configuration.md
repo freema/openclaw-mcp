@@ -131,17 +131,24 @@ When `TRUST_PROXY` is unset and a reverse proxy injects an `X-Forwarded-For` hea
 
 ### CORS Configuration
 
-| Variable       | Description                       | Default |
-| -------------- | --------------------------------- | ------- |
-| `CORS_ORIGINS` | Allowed origins (comma-separated) | `*`     |
+| Variable       | Description                       | Default            |
+| -------------- | --------------------------------- | ------------------ |
+| `CORS_ORIGINS` | Allowed origins (comma-separated) | _(CORS disabled)_  |
+
+CORS is **off unless you opt in**. With it off the server sends no
+`Access-Control-Allow-Origin` header, so browsers refuse cross-origin calls to
+it. Non-browser clients — Claude.ai, Claude Desktop, and anything speaking
+stdio — are unaffected; set this only when a web page has to reach the server
+directly.
 
 **CORS_ORIGINS examples:**
 
-- `*` — Allow all origins (not recommended for production)
-- `none` — Disable CORS entirely
+- _(unset)_ or `none` — CORS disabled (default)
 - `https://claude.ai` — Single origin
 - `https://claude.ai,https://your-app.com` — Multiple origins
 - `*.example.com` — Wildcard subdomain
+- `*` — Allow all origins. Lets any web page drive this server through a
+  visitor's browser; do not use in production.
 
 ### Authentication (OAuth 2.1)
 
@@ -177,6 +184,18 @@ When auth is enabled, the server exposes these OAuth 2.1 endpoints:
 - `POST /revoke` — Token revocation
 
 Dynamic client registration is **disabled by default** — only the pre-configured client (from `MCP_CLIENT_ID` + `MCP_CLIENT_SECRET`) can authenticate. This prevents anyone who knows the server URL from self-registering and bypassing auth.
+
+#### Redirect URI allow-list
+
+`MCP_REDIRECT_URIS` restricts which `redirect_uri` values the `/authorize` endpoint accepts for the pre-configured client. When unset, any redirect URI is accepted (the client secret verified during token exchange remains the actual auth gate) — set it in production so authorization codes can only be delivered to callbacks you trust.
+
+Claude.ai uses exactly this callback (note the `/api/mcp/auth_callback` path):
+
+```bash
+MCP_REDIRECT_URIS=https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback
+```
+
+Matching is exact (scheme, host, path). A common mistake is registering `https://claude.ai/oauth/callback`, which does **not** match and makes Claude.ai fail with `Unregistered redirect_uri`. If you also connect other clients (e.g. MCP Inspector), append their callbacks to the comma-separated list — loopback callbacks (`http://localhost/...`, `http://127.0.0.1/...`) match on any port per RFC 8252.
 
 #### Cursor / Windsurf compatibility (dev only)
 
