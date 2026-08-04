@@ -16,7 +16,7 @@ All configuration can be done via environment variables. Copy `.env.example` to 
 
 `OPENCLAW_AGENT_ID` is sent as the `x-openclaw-agent-id` header. When unset, the gateway uses its default agent.
 
-> **Note:** How the gateway handles an unrecognized `OPENCLAW_AGENT_ID` (reject vs. silently fall back to the default agent) depends on your gateway version/configuration. If you set this, verify against your gateway's behavior — a typo could otherwise route requests somewhere unexpected with no error.
+> **Note:** An unrecognized `OPENCLAW_AGENT_ID` is rejected by the gateway with `400 Bad Request` (`"Unknown agent '<id>'."`) — it does **not** silently fall back to the default agent. A typo will surface as a loud error, not a silent misroute.
 
 ### Multi-Instance Mode
 
@@ -62,7 +62,7 @@ Each instance object supports:
 | `timeout` | number  | No       | Request timeout in ms (inherits global `OPENCLAW_TIMEOUT_MS` if omitted) |
 | `default` | boolean | No       | Mark as the default instance (first instance is default if none marked)  |
 
-`agentId` is sent as the `x-openclaw-agent-id` header. When omitted, the gateway uses its default agent.
+`agentId` is sent as the `x-openclaw-agent-id` header. When omitted, the gateway uses its default agent. An unrecognized value is rejected with `400 Bad Request`, not silently routed to the default.
 
 **Using instances in tools:**
 
