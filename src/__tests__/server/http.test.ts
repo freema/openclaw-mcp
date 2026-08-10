@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { loadCorsConfig, isOriginAllowed, parseTrustProxy } from '../../server/http.js';
+import {
+  loadCorsConfig,
+  isOriginAllowed,
+  parseTrustProxy,
+  parseAllowedHosts,
+  resolveAllowedHostnames,
+} from '../../server/http.js';
 
 describe('loadCorsConfig', () => {
   beforeEach(() => {
@@ -111,5 +117,50 @@ describe('parseTrustProxy', () => {
   it('trims surrounding whitespace', () => {
     expect(parseTrustProxy('  1  ')).toBe(1);
     expect(parseTrustProxy('  true  ')).toBe(true);
+  });
+});
+
+describe('parseAllowedHosts', () => {
+  it('returns undefined for unset or empty input', () => {
+    expect(parseAllowedHosts(undefined)).toBeUndefined();
+    expect(parseAllowedHosts('')).toBeUndefined();
+    expect(parseAllowedHosts('  ,  ,')).toBeUndefined();
+  });
+
+  it('splits on commas, trims, and lowercases', () => {
+    expect(parseAllowedHosts('proxy.example.com')).toEqual(['proxy.example.com']);
+    expect(parseAllowedHosts(' Machine.Tail-Net.ts.net , mcp.example.com ,')).toEqual([
+      'machine.tail-net.ts.net',
+      'mcp.example.com',
+    ]);
+  });
+});
+
+describe('resolveAllowedHostnames', () => {
+  const LOOPBACK = ['localhost', '127.0.0.1', '[::1]'];
+
+  it('enables loopback-only validation for loopback binds', () => {
+    expect(resolveAllowedHostnames('127.0.0.1', undefined)).toEqual(LOOPBACK);
+    expect(resolveAllowedHostnames('localhost', undefined)).toEqual(LOOPBACK);
+    expect(resolveAllowedHostnames('::1', undefined)).toEqual(LOOPBACK);
+  });
+
+  it('extends the loopback set with configured hosts (the reverse-proxy case, #41)', () => {
+    expect(resolveAllowedHostnames('127.0.0.1', ['machine.tail-net.ts.net'])).toEqual([
+      ...LOOPBACK,
+      'machine.tail-net.ts.net',
+    ]);
+  });
+
+  it('disables validation for non-loopback binds without an allowlist', () => {
+    expect(resolveAllowedHostnames('0.0.0.0', undefined)).toBeNull();
+    expect(resolveAllowedHostnames('0.0.0.0', [])).toBeNull();
+  });
+
+  it('turns validation on for non-loopback binds when an allowlist is configured', () => {
+    expect(resolveAllowedHostnames('0.0.0.0', ['mcp.example.com'])).toEqual([
+      ...LOOPBACK,
+      'mcp.example.com',
+    ]);
   });
 });

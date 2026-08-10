@@ -24,8 +24,8 @@ import { createMcpHandler } from '@modelcontextprotocol/server';
 import { toNodeHandler } from '@modelcontextprotocol/node';
 import {
   requireBearerAuth,
-  localhostHostValidation,
-  localhostOriginValidation,
+  hostHeaderValidation,
+  originValidation,
   getOAuthProtectedResourceMetadataUrl,
 } from '@modelcontextprotocol/express';
 
@@ -57,6 +57,13 @@ export interface HttpServerConfig {
    * Express default (`false`) untouched.
    */
   trustProxy?: boolean | number | string;
+  /**
+   * Extra hostnames accepted by DNS-rebinding protection, beyond the loopback
+   * set. Needed when a reverse proxy in front of a loopback bind preserves the
+   * public `Host` header (e.g. Tailscale Serve, nginx with `proxy_set_header
+   * Host $host`). Hostnames only, no scheme or port; IPv6 in brackets.
+   */
+  allowedHosts?: string[];
   /** Auth is enabled when authConfig is provided */
   authConfig?: AuthProviderConfig;
 }
@@ -81,6 +88,36 @@ export function parseTrustProxy(value: string | undefined): boolean | number | s
     return parseInt(trimmed, 10);
   }
   return trimmed;
+}
+
+/** Hostnames always accepted when Host/Origin validation is active. */
+const LOOPBACK_HOSTNAMES = ['localhost', '127.0.0.1', '[::1]'];
+
+/**
+ * Parse the ALLOWED_HOSTS env var / --allowed-hosts CLI flag: comma-separated
+ * hostnames, case-insensitive. Returns `undefined` when nothing usable is set.
+ */
+export function parseAllowedHosts(value: string | undefined): string[] | undefined {
+  if (!value) return undefined;
+  const hosts = value
+    .split(',')
+    .map((host) => host.trim().toLowerCase())
+    .filter((host) => host.length > 0);
+  return hosts.length > 0 ? hosts : undefined;
+}
+
+/**
+ * Decide whether Host/Origin validation applies and with which hostname list.
+ * Validation is on for loopback binds (DNS-rebinding protection) and whenever
+ * an explicit allowlist is configured; `null` means validation is disabled.
+ */
+export function resolveAllowedHostnames(
+  host: string,
+  allowedHosts: string[] | undefined
+): string[] | null {
+  const isLoopbackBind = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  if (!isLoopbackBind && !allowedHosts?.length) return null;
+  return [...LOOPBACK_HOSTNAMES, ...(allowedHosts ?? [])];
 }
 
 // --- CORS helpers ---
@@ -148,17 +185,18 @@ export async function createHttpServer(
   // DNS-rebinding protection for loopback binds. A browser can resolve an
   // attacker-controlled name to 127.0.0.1, so a local server must check that
   // Host and Origin really are local. SDK v1's createMcpExpressApp did this;
-  // on v2 it has to be wired explicitly.
-  const isLoopbackBind =
-    config.host === '127.0.0.1' || config.host === 'localhost' || config.host === '::1';
-  if (isLoopbackBind) {
-    app.use(localhostHostValidation());
-    app.use(localhostOriginValidation());
-    log('DNS-rebinding protection: enabled (loopback bind)');
+  // on v2 it has to be wired explicitly. ALLOWED_HOSTS extends the accepted
+  // set for reverse proxies that preserve the public Host header (#41), and
+  // also turns validation on for non-loopback binds.
+  const allowedHostnames = resolveAllowedHostnames(config.host, config.allowedHosts);
+  if (allowedHostnames) {
+    app.use(hostHeaderValidation(allowedHostnames));
+    app.use(originValidation(allowedHostnames));
+    log(`DNS-rebinding protection: enabled (allowed hosts: ${allowedHostnames.join(', ')})`);
   } else {
     log(
-      `DNS-rebinding protection: disabled (HOST=${config.host} is not loopback) — ` +
-        'rely on your reverse proxy and CORS_ORIGINS to restrict access'
+      `DNS-rebinding protection: disabled (HOST=${config.host} is not loopback and ` +
+        'ALLOWED_HOSTS is not set) — rely on your reverse proxy and CORS_ORIGINS to restrict access'
     );
   }
 

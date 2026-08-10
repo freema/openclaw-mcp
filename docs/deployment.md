@@ -99,6 +99,8 @@ The MCP bridge must be served over HTTPS for production use. Use a reverse proxy
 > **Important:** When running behind a reverse proxy you **must** set both:
 > - `MCP_ISSUER_URL` to your public HTTPS URL — otherwise OAuth metadata endpoints advertise `http://localhost:3000` and MCP clients (including Claude.ai) fail to authenticate with `Protected resource http://localhost:3000/mcp does not match expected https://your-domain.com/mcp`.
 > - `TRUST_PROXY=1` so Express trusts the proxy's `X-Forwarded-For` header — otherwise `express-rate-limit` (used by the MCP SDK auth handlers) crashes `/token` with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`.
+>
+> Running **bare-metal with a loopback bind** (`HOST=127.0.0.1`) behind a proxy that preserves the public `Host` header (Tailscale Serve, nginx with `proxy_set_header Host $host`)? Also set `ALLOWED_HOSTS=<your-public-hostname>` — otherwise DNS-rebinding protection rejects every proxied request with `403 Invalid Host`. See [Server Settings](configuration.md#server-settings-http-transport).
 
 ### Caddy (recommended)
 

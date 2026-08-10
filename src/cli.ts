@@ -20,6 +20,7 @@ export interface CliArgs {
   redirectUris: string[] | undefined;
   allowDcr: boolean;
   trustProxy: string | undefined;
+  allowedHosts: string | undefined;
   instances: InstanceConfig[];
 }
 
@@ -66,6 +67,13 @@ export function parseArguments(version: string): CliArgs {
       type: 'string',
       description: 'Host for HTTP server',
       default: process.env.HOST || '0.0.0.0',
+    })
+    .option('allowed-hosts', {
+      type: 'string',
+      description:
+        'Comma-separated extra hostnames accepted by DNS-rebinding protection ' +
+        '(for reverse proxies that preserve the public Host header)',
+      default: process.env.ALLOWED_HOSTS || undefined,
     })
     .option('timeout', {
       type: 'number',
@@ -186,6 +194,7 @@ export function parseArguments(version: string): CliArgs {
       : undefined,
     allowDcr: argv['allow-dcr'] as boolean,
     trustProxy: argv['trust-proxy'] as string | undefined,
+    allowedHosts: argv['allowed-hosts'] as string | undefined,
     instances,
   };
 }

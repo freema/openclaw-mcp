@@ -113,10 +113,11 @@ services:
 
 | Variable      | Description                                                       | Default                  |
 | ------------- | ----------------------------------------------------------------- | ------------------------ |
-| `PORT`        | HTTP server port                                                  | `3000`                   |
-| `HOST`        | HTTP server host                                                  | `0.0.0.0`                |
-| `DEBUG`       | Enable debug logging                                              | `false`                  |
-| `TRUST_PROXY` | Express `trust proxy` setting (required behind a reverse proxy)   | (unset — trust nothing)  |
+| `PORT`          | HTTP server port                                                  | `3000`                   |
+| `HOST`          | HTTP server host                                                  | `0.0.0.0`                |
+| `ALLOWED_HOSTS` | Extra hostnames accepted by DNS-rebinding protection              | (unset)                  |
+| `DEBUG`         | Enable debug logging                                              | `false`                  |
+| `TRUST_PROXY`   | Express `trust proxy` setting (required behind a reverse proxy)   | (unset — trust nothing)  |
 
 **`TRUST_PROXY` values:**
 
@@ -129,6 +130,16 @@ services:
 | `10.0.0.0/8`   | Trust a specific IP or CIDR range                                              |
 
 When `TRUST_PROXY` is unset and a reverse proxy injects an `X-Forwarded-For` header, the MCP SDK's `/token` handler crashes with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` and OAuth fails. Set this whenever the server is behind Caddy, nginx, Traefik, Cloudflare Tunnel, ngrok, or any other proxy.
+
+**`ALLOWED_HOSTS`:**
+
+When the server binds to a loopback address (`127.0.0.1`, `localhost`, `::1`), DNS-rebinding protection rejects any request whose `Host` or `Origin` header is not loopback with `403 Invalid Host`. That breaks the bare-metal pattern of a loopback bind fronted by a reverse proxy that preserves the public `Host` header (Tailscale Serve, nginx with `proxy_set_header Host $host`) — the sensible alternative, binding to `0.0.0.0`, would expose the port on every interface.
+
+Set `ALLOWED_HOSTS` to a comma-separated list of extra hostnames to accept (hostnames only — no scheme or port, IPv6 in brackets, case-insensitive). The loopback set stays accepted and protection stays enabled; on a non-loopback bind, setting `ALLOWED_HOSTS` turns Host/Origin validation on where it would otherwise be off.
+
+```bash
+HOST=127.0.0.1 ALLOWED_HOSTS=machine.tail-net.ts.net openclaw-mcp --transport http
+```
 
 ### CORS Configuration
 
