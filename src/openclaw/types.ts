@@ -4,6 +4,7 @@ export interface InstanceConfig {
   name: string;
   url: string;
   token?: string;
+  agentId?: string;
   timeout?: number;
   default?: boolean;
 }

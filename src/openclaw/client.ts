@@ -50,22 +50,27 @@ export class OpenClawCancelledError extends Error {
 export class OpenClawClient {
   private baseUrl: string;
   private gatewayToken: string | undefined;
+  private agentId: string | undefined;
   private timeoutMs: number;
   private model: string;
   private maxStreamMs: number;
 
   constructor(
     baseUrl: string,
-    gatewayToken?: string,
-    timeoutMs: number = DEFAULT_TIMEOUT_MS,
-    model: string = 'openclaw',
-    maxStreamMs: number = DEFAULT_MAX_STREAM_MS
+    options: {
+      gatewayToken?: string;
+      agentId?: string;
+      timeoutMs?: number;
+      model?: string;
+      maxStreamMs?: number;
+    } = {}
   ) {
     this.baseUrl = baseUrl.replace(/\/$/, '');
-    this.gatewayToken = gatewayToken;
-    this.timeoutMs = timeoutMs;
-    this.model = model;
-    this.maxStreamMs = Math.max(maxStreamMs, timeoutMs);
+    this.gatewayToken = options.gatewayToken;
+    this.agentId = options.agentId;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.model = options.model ?? 'openclaw';
+    this.maxStreamMs = Math.max(options.maxStreamMs ?? DEFAULT_MAX_STREAM_MS, this.timeoutMs);
   }
 
   private buildHeaders(): Record<string, string> {
@@ -74,6 +79,9 @@ export class OpenClawClient {
     };
     if (this.gatewayToken) {
       headers['Authorization'] = `Bearer ${this.gatewayToken}`;
+    }
+    if (this.agentId) {
+      headers['x-openclaw-agent-id'] = this.agentId;
     }
     return headers;
   }
