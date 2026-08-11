@@ -10,14 +10,21 @@ describe('loadCorsConfig', () => {
     vi.unstubAllEnvs();
   });
 
-  it('returns wildcard when env is undefined', () => {
+  it('disables CORS when env is undefined', () => {
     delete process.env.CORS_ORIGINS;
     const config = loadCorsConfig();
-    expect(config.origins).toEqual(['*']);
-    expect(config.enabled).toBe(true);
+    expect(config.origins).toEqual([]);
+    expect(config.enabled).toBe(false);
   });
 
-  it('returns wildcard for "*"', () => {
+  it('disables CORS for an empty value', () => {
+    vi.stubEnv('CORS_ORIGINS', '');
+    const config = loadCorsConfig();
+    expect(config.origins).toEqual([]);
+    expect(config.enabled).toBe(false);
+  });
+
+  it('returns wildcard only when explicitly opted in with "*"', () => {
     vi.stubEnv('CORS_ORIGINS', '*');
     const config = loadCorsConfig();
     expect(config.origins).toEqual(['*']);
@@ -26,6 +33,13 @@ describe('loadCorsConfig', () => {
 
   it('disables CORS for "none"', () => {
     vi.stubEnv('CORS_ORIGINS', 'none');
+    const config = loadCorsConfig();
+    expect(config.origins).toEqual([]);
+    expect(config.enabled).toBe(false);
+  });
+
+  it('disables CORS for "NONE" regardless of case', () => {
+    vi.stubEnv('CORS_ORIGINS', 'NONE');
     const config = loadCorsConfig();
     expect(config.origins).toEqual([]);
     expect(config.enabled).toBe(false);

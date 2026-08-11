@@ -10,8 +10,13 @@ All configuration can be done via environment variables. Copy `.env.example` to 
 | ------------------------ | --------------------------------------- | ------------------------ |
 | `OPENCLAW_URL`           | OpenClaw gateway URL                    | `http://127.0.0.1:18789` |
 | `OPENCLAW_GATEWAY_TOKEN` | Bearer token for gateway authentication | (none)                   |
+| `OPENCLAW_AGENT_ID`      | Named agent to route requests to        | (none)                   |
 | `OPENCLAW_TIMEOUT_MS`    | Request timeout in milliseconds         | `120000` (2 min)         |
 | `OPENCLAW_MODEL`         | Model name for chat completions         | `openclaw`               |
+
+`OPENCLAW_AGENT_ID` is sent as the `x-openclaw-agent-id` header. When unset, the gateway uses its default agent.
+
+> **Note:** An unrecognized `OPENCLAW_AGENT_ID` is rejected by the gateway with `400 Bad Request` (`"Unknown agent '<id>'."`) — it does **not** silently fall back to the default agent. A typo will surface as a loud error, not a silent misroute.
 
 ### Multi-Instance Mode
 
@@ -53,8 +58,11 @@ Each instance object supports:
 | `name`    | string  | Yes      | Unique instance name (1-64 chars, alphanumeric/dashes/underscores)       |
 | `url`     | string  | Yes      | OpenClaw gateway URL (http or https only)                                |
 | `token`   | string  | No       | Bearer token for gateway authentication                                  |
+| `agentId` | string  | No       | Named agent to route requests to on this instance's gateway              |
 | `timeout` | number  | No       | Request timeout in ms (inherits global `OPENCLAW_TIMEOUT_MS` if omitted) |
 | `default` | boolean | No       | Mark as the default instance (first instance is default if none marked)  |
+
+`agentId` is sent as the `x-openclaw-agent-id` header. When omitted, the gateway uses its default agent. An unrecognized value is rejected with `400 Bad Request`, not silently routed to the default.
 
 **Using instances in tools:**
 
@@ -123,17 +131,24 @@ When `TRUST_PROXY` is unset and a reverse proxy injects an `X-Forwarded-For` hea
 
 ### CORS Configuration
 
-| Variable       | Description                       | Default |
-| -------------- | --------------------------------- | ------- |
-| `CORS_ORIGINS` | Allowed origins (comma-separated) | `*`     |
+| Variable       | Description                       | Default            |
+| -------------- | --------------------------------- | ------------------ |
+| `CORS_ORIGINS` | Allowed origins (comma-separated) | _(CORS disabled)_  |
+
+CORS is **off unless you opt in**. With it off the server sends no
+`Access-Control-Allow-Origin` header, so browsers refuse cross-origin calls to
+it. Non-browser clients — Claude.ai, Claude Desktop, and anything speaking
+stdio — are unaffected; set this only when a web page has to reach the server
+directly.
 
 **CORS_ORIGINS examples:**
 
-- `*` — Allow all origins (not recommended for production)
-- `none` — Disable CORS entirely
+- _(unset)_ or `none` — CORS disabled (default)
 - `https://claude.ai` — Single origin
 - `https://claude.ai,https://your-app.com` — Multiple origins
 - `*.example.com` — Wildcard subdomain
+- `*` — Allow all origins. Lets any web page drive this server through a
+  visitor's browser; do not use in production.
 
 ### Authentication (OAuth 2.1)
 
