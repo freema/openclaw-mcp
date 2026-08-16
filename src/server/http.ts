@@ -123,17 +123,24 @@ export function resolveAllowedHostnames(
 // --- CORS helpers ---
 
 /**
- * Load CORS configuration from environment
+ * Load CORS configuration from environment.
+ *
+ * Defaults to CORS disabled. Sending `Access-Control-Allow-Origin: *` by
+ * default let any web page drive this server through a visitor's browser;
+ * enabling cross-origin access is now an explicit opt-in via `CORS_ORIGINS`.
+ * Set `CORS_ORIGINS=*` to restore the old behaviour, or list the origins you
+ * actually serve. Non-browser clients (Claude.ai, Claude Desktop, Inspector
+ * over stdio) are unaffected — CORS only applies to browsers.
  */
 export function loadCorsConfig(): { origins: string[]; enabled: boolean } {
   const corsOrigins = process.env.CORS_ORIGINS;
 
-  if (!corsOrigins || corsOrigins === '*') {
-    return { origins: ['*'], enabled: true };
+  if (!corsOrigins || corsOrigins.toLowerCase() === 'none') {
+    return { origins: [], enabled: false };
   }
 
-  if (corsOrigins.toLowerCase() === 'none' || corsOrigins === '') {
-    return { origins: [], enabled: false };
+  if (corsOrigins === '*') {
+    return { origins: ['*'], enabled: true };
   }
 
   return {
@@ -371,6 +378,13 @@ export async function createHttpServer(
     log(`HTTP server listening on ${config.host}:${config.port}`);
     log(`Auth enabled: ${authEnabled}`);
     log(`CORS origins: ${corsConfig.enabled ? corsConfig.origins.join(', ') : 'disabled'}`);
+
+    if (corsConfig.origins.includes('*')) {
+      logError(
+        'WARNING: CORS_ORIGINS=* allows any web page to call this server from a browser. ' +
+          'List explicit origins instead.'
+      );
+    }
 
     if (authEnabled) {
       log('OAuth 2.1 authentication is REQUIRED for all connections');

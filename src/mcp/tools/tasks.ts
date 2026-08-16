@@ -62,14 +62,15 @@ async function processTask(task: Task, registry: InstanceRegistry): Promise<void
     });
     // A cancel can land between the gateway resolving and this line; the
     // cancelled status must win, otherwise the caller is told the task was
-    // cancelled and then sees it complete.
-    if (taskManager.get(task.id)?.status === 'cancelled') {
+    // cancelled and then sees it complete. `task` is the manager's own live
+    // record, so this sees the cancel without needing an owner-scoped read.
+    if (task.status === 'cancelled') {
       return;
     }
     taskManager.updateStatus(task.id, 'completed', response.response);
   } catch (error) {
     // A cancel aborts the request; don't overwrite the cancelled status.
-    if (taskManager.get(task.id)?.status === 'cancelled') {
+    if (task.status === 'cancelled') {
       return;
     }
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
@@ -113,7 +114,8 @@ export function startTaskProcessor(registry: InstanceRegistry): void {
 
 export async function handleOpenclawChatAsync(
   registry: InstanceRegistry,
-  input: unknown
+  input: unknown,
+  ownerId: string
 ): Promise<ToolResponse> {
   if (!validateInputIsObject(input)) {
     return errorResponse('Invalid input: expected an object');
@@ -165,6 +167,7 @@ export async function handleOpenclawChatAsync(
   const task = taskManager.create({
     type: 'chat',
     input: { message: msgResult.value, session_id: sessionId },
+    ownerId,
     sessionId,
     priority,
     instanceId,
@@ -186,7 +189,8 @@ export async function handleOpenclawChatAsync(
 
 export async function handleOpenclawTaskStatus(
   _registry: InstanceRegistry,
-  input: unknown
+  input: unknown,
+  ownerId: string
 ): Promise<ToolResponse> {
   if (!validateInputIsObject(input)) {
     return errorResponse('Invalid input: expected an object');
@@ -198,7 +202,9 @@ export async function handleOpenclawTaskStatus(
   }
   const task_id = tidResult.value;
 
-  const task = taskManager.get(task_id);
+  // Tasks owned by another connection read as "not found" — same message as a
+  // genuinely unknown ID, so this cannot be used to probe for their existence.
+  const task = taskManager.get(task_id, ownerId);
   if (!task) {
     return errorResponse(`Task not found: ${task_id}`);
   }
@@ -241,7 +247,8 @@ const VALID_TASK_STATUSES: readonly TaskStatus[] = [
 
 export async function handleOpenclawTaskList(
   _registry: InstanceRegistry,
-  input: unknown
+  input: unknown,
+  ownerId: string
 ): Promise<ToolResponse> {
   if (!validateInputIsObject(input)) {
     return errorResponse('Invalid input: expected an object');
@@ -276,8 +283,12 @@ export async function handleOpenclawTaskList(
     instanceFilter = instResult.value;
   }
 
-  const tasks = taskManager.list({ status, sessionId: session_id, instanceId: instanceFilter });
-  const stats = taskManager.stats();
+  const tasks = taskManager.list(ownerId, {
+    status,
+    sessionId: session_id,
+    instanceId: instanceFilter,
+  });
+  const stats = taskManager.stats(ownerId);
 
   const taskList = tasks.map((t) => ({
     task_id: t.id,
@@ -303,7 +314,8 @@ export async function handleOpenclawTaskList(
 
 export async function handleOpenclawTaskCancel(
   _registry: InstanceRegistry,
-  input: unknown
+  input: unknown,
+  ownerId: string
 ): Promise<ToolResponse> {
   if (!validateInputIsObject(input)) {
     return errorResponse('Invalid input: expected an object');
@@ -315,7 +327,9 @@ export async function handleOpenclawTaskCancel(
   }
   const task_id = tidResult.value;
 
-  const task = taskManager.get(task_id);
+  // Same as task_status: another connection's task is indistinguishable from
+  // an unknown one.
+  const task = taskManager.get(task_id, ownerId);
   if (!task) {
     return errorResponse(`Task not found: ${task_id}`);
   }
@@ -326,7 +340,7 @@ export async function handleOpenclawTaskCancel(
     );
   }
 
-  const cancelled = taskManager.cancel(task_id);
+  const cancelled = taskManager.cancel(task_id, ownerId);
   if (!cancelled) {
     return errorResponse('Failed to cancel task');
   }
