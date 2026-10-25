@@ -97,7 +97,8 @@ tasks:
     env:
       OPENCLAW_URL: http://127.0.0.1:18789
       OPENCLAW_GATEWAY_TOKEN: '{{.OPENCLAW_GATEWAY_TOKEN}}'
-      OAUTH_ENABLED: 'false'
+      MCP_DANGEROUSLY_DISABLE_AUTH: 'true'
+      HOST: 127.0.0.1
       DEBUG: 'true'
 
   # ── Docker ───────────────────────────────────────────────────────────

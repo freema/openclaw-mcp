@@ -13,14 +13,23 @@ export interface CliArgs {
   host: string;
   timeout: number;
   debug: boolean;
-  authEnabled: boolean;
+  authEnabled: boolean | undefined;
+  dangerouslyDisableAuth: boolean;
   clientId: string | undefined;
   clientSecret: string | undefined;
   issuerUrl: string | undefined;
   redirectUris: string[] | undefined;
   allowDcr: boolean;
   trustProxy: string | undefined;
+  allowedHosts: string | undefined;
   instances: InstanceConfig[];
+}
+
+/** `'true'` / `'false'` → boolean; anything else (including unset) → undefined. */
+export function parseEnvBoolean(value: string | undefined): boolean | undefined {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return undefined;
 }
 
 export function parseArguments(version: string): CliArgs {
@@ -67,6 +76,13 @@ export function parseArguments(version: string): CliArgs {
       description: 'Host for HTTP server',
       default: process.env.HOST || '0.0.0.0',
     })
+    .option('allowed-hosts', {
+      type: 'string',
+      description:
+        'Comma-separated extra hostnames accepted by DNS-rebinding protection ' +
+        '(for reverse proxies that preserve the public Host header)',
+      default: process.env.ALLOWED_HOSTS || undefined,
+    })
     .option('timeout', {
       type: 'number',
       description: 'Request timeout in milliseconds',
@@ -79,8 +95,17 @@ export function parseArguments(version: string): CliArgs {
     })
     .option('auth', {
       type: 'boolean',
-      description: 'Enable OAuth authentication (HTTP mode)',
-      default: process.env.AUTH_ENABLED === 'true' || process.env.OAUTH_ENABLED === 'true',
+      description:
+        'Deprecated: OAuth is always required in HTTP mode. --no-auth / AUTH_ENABLED=false ' +
+        'now refuses to start; use --dangerously-disable-auth instead',
+      default: parseEnvBoolean(process.env.AUTH_ENABLED ?? process.env.OAUTH_ENABLED),
+    })
+    .option('dangerously-disable-auth', {
+      type: 'boolean',
+      description:
+        'Run the HTTP transport WITHOUT authentication. Anyone who can reach the port can use ' +
+        'every tool. Only for setups where a proxy in front authenticates requests',
+      default: process.env.MCP_DANGEROUSLY_DISABLE_AUTH === 'true',
     })
     .option('client-id', {
       type: 'string',
@@ -174,7 +199,8 @@ export function parseArguments(version: string): CliArgs {
     host: argv.host,
     timeout: argv.timeout,
     debug: argv.debug,
-    authEnabled: argv.auth,
+    authEnabled: argv.auth as boolean | undefined,
+    dangerouslyDisableAuth: argv['dangerously-disable-auth'] as boolean,
     clientId: argv['client-id'] as string | undefined,
     clientSecret: argv['client-secret'] as string | undefined,
     issuerUrl: argv['issuer-url'] as string | undefined,
@@ -186,6 +212,7 @@ export function parseArguments(version: string): CliArgs {
       : undefined,
     allowDcr: argv['allow-dcr'] as boolean,
     trustProxy: argv['trust-proxy'] as string | undefined,
+    allowedHosts: argv['allowed-hosts'] as string | undefined,
     instances,
   };
 }

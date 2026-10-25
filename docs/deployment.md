@@ -19,7 +19,6 @@ services:
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
       - OPENCLAW_MODEL=${OPENCLAW_MODEL:-openclaw}
       - DEBUG=${DEBUG:-false}
-      - AUTH_ENABLED=${AUTH_ENABLED:-true}
       - MCP_CLIENT_ID=${MCP_CLIENT_ID:-openclaw}
       - MCP_CLIENT_SECRET=${MCP_CLIENT_SECRET:-}
       - MCP_ISSUER_URL=${MCP_ISSUER_URL:-}
@@ -51,9 +50,6 @@ OPENCLAW_GATEWAY_TOKEN=your-gateway-token
 MCP_CLIENT_ID=openclaw
 MCP_CLIENT_SECRET=your-client-secret
 
-# Enable OAuth (required for production HTTP transport)
-AUTH_ENABLED=true
-
 # Public URL (required when behind a reverse proxy)
 MCP_ISSUER_URL=https://mcp.your-domain.com
 
@@ -81,7 +77,7 @@ docker compose up -d
 ## Security Checklist
 
 - [ ] HTTPS enabled (via reverse proxy in front of the MCP bridge)
-- [ ] OAuth enabled (`AUTH_ENABLED=true`)
+- [ ] OAuth configured (`MCP_CLIENT_ID` + `MCP_CLIENT_SECRET`; mandatory since 1.8.0)
 - [ ] `MCP_CLIENT_ID` is valid (3–64 chars, alphanumeric/dashes/underscores)
 - [ ] `MCP_CLIENT_SECRET` generated securely (`openssl rand -hex 32`, min 32 chars)
 - [ ] `MCP_ISSUER_URL` set to public HTTPS URL (when behind reverse proxy)
@@ -99,6 +95,8 @@ The MCP bridge must be served over HTTPS for production use. Use a reverse proxy
 > **Important:** When running behind a reverse proxy you **must** set both:
 > - `MCP_ISSUER_URL` to your public HTTPS URL — otherwise OAuth metadata endpoints advertise `http://localhost:3000` and MCP clients (including Claude.ai) fail to authenticate with `Protected resource http://localhost:3000/mcp does not match expected https://your-domain.com/mcp`.
 > - `TRUST_PROXY=1` so Express trusts the proxy's `X-Forwarded-For` header — otherwise `express-rate-limit` (used by the MCP SDK auth handlers) crashes `/token` with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`.
+>
+> Running **bare-metal with a loopback bind** (`HOST=127.0.0.1`) behind a proxy that preserves the public `Host` header (Tailscale Serve, nginx with `proxy_set_header Host $host`)? Also set `ALLOWED_HOSTS=<your-public-hostname>` — otherwise DNS-rebinding protection rejects every proxied request with `403 Invalid Host`. See [Server Settings](configuration.md#server-settings-http-transport).
 
 ### Caddy (recommended)
 

@@ -621,7 +621,6 @@ services:
     environment:
       - OPENCLAW_URL=http://host.docker.internal:18789
       - OPENCLAW_GATEWAY_TOKEN=your-token
-      - AUTH_ENABLED=true
       - MCP_CLIENT_ID=openclaw
       - MCP_CLIENT_SECRET=${MCP_CLIENT_SECRET}
     ports:
@@ -646,8 +645,7 @@ services:
           <!-- Remote -->
           <div class="tab-panel" id="tab-remote">
             <p class="tab-comment"># Run with OAuth credentials for remote access</p>
-<pre><code>AUTH_ENABLED=true \
-MCP_CLIENT_ID=openclaw \
+<pre><code>MCP_CLIENT_ID=openclaw \
 MCP_CLIENT_SECRET=$MCP_CLIENT_SECRET \
 MCP_ISSUER_URL=https://mcp.your-domain.com \
 CORS_ORIGINS=https://claude.ai \

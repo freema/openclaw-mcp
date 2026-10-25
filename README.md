@@ -51,7 +51,6 @@ services:
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
       - OPENCLAW_AGENT_ID=${OPENCLAW_AGENT_ID:-}
       - OPENCLAW_MODEL=openclaw
-      - AUTH_ENABLED=true
       - MCP_CLIENT_ID=openclaw
       - MCP_CLIENT_SECRET=${MCP_CLIENT_SECRET}
       - MCP_ISSUER_URL=${MCP_ISSUER_URL:-}
@@ -108,7 +107,7 @@ Add to your Claude Desktop config:
 ### Remote (Claude.ai) without Docker
 
 ```bash
-AUTH_ENABLED=true MCP_CLIENT_ID=openclaw MCP_CLIENT_SECRET=your-secret \
+MCP_CLIENT_ID=openclaw MCP_CLIENT_SECRET=your-secret \
   MCP_ISSUER_URL=https://mcp.your-domain.com \
   CORS_ORIGINS=https://claude.ai OPENCLAW_GATEWAY_TOKEN=your-gateway-token \
   npx openclaw-mcp --transport http --port 3000
@@ -265,7 +264,7 @@ See [Configuration — Multi-Instance Mode](docs/configuration.md#multi-instance
 export MCP_CLIENT_SECRET=$(openssl rand -hex 32)
 
 # Run with auth enabled
-AUTH_ENABLED=true MCP_CLIENT_ID=openclaw MCP_CLIENT_SECRET=$MCP_CLIENT_SECRET \
+MCP_CLIENT_ID=openclaw MCP_CLIENT_SECRET=$MCP_CLIENT_SECRET \
   openclaw-mcp --transport http
 ```
 
@@ -278,6 +277,35 @@ CORS_ORIGINS=https://claude.ai,https://your-app.com
 
 See [Configuration](docs/configuration.md) for all security options.
 
+### Upgrading to 1.8.0
+
+**OAuth is now mandatory for the HTTP transport.** Before 1.8.0 HTTP mode ran
+without authentication unless `AUTH_ENABLED=true` was set, so a bare
+`docker run` of the image exposed every tool to anyone who could reach the
+port. Now:
+
+- Without `MCP_CLIENT_ID` and `MCP_CLIENT_SECRET` the server refuses to start.
+  `AUTH_ENABLED=true` still works but is no longer needed.
+- `AUTH_ENABLED=false` / `--no-auth` refuses to start instead of silently
+  disabling auth. If you really need an unauthenticated server (e.g. a proxy
+  in front already authenticates every request), set
+  `MCP_DANGEROUSLY_DISABLE_AUTH=true` (`--dangerously-disable-auth`).
+- stdio is unchanged.
+
+**Async tasks now belong to the OAuth client, not the MCP connection.** A
+client that opens a new MCP session between tool calls can poll the tasks it
+created ([#44](https://github.com/freema/openclaw-mcp/issues/44)). The bridge
+is single-tenant — whoever holds the client secret already has full access to
+the same OpenClaw gateway — so the OAuth client is the isolation boundary.
+Dynamically registered clients each get their own namespace. Without auth,
+tasks stay scoped to the connection.
+
+**New `ALLOWED_HOSTS`** for a loopback bind behind a reverse proxy that
+preserves the public `Host` header (Tailscale Serve, nginx with
+`proxy_set_header Host $host`), which previously failed with `403 Invalid Host`
+([#41](https://github.com/freema/openclaw-mcp/issues/41)). See
+[configuration](docs/configuration.md#server-settings-http-transport).
+
 ### Upgrading to 1.7.0
 
 Two defaults changed for security. Both only affect HTTP mode; stdio is
@@ -289,7 +317,7 @@ unchanged.
   `CORS_ORIGINS=*` to restore the old behaviour.
 - **Async tasks are scoped to the connection that created them.** A client
   that used to poll a `task_id` queued by a different connection will now get
-  "not found".
+  "not found". (1.8.0 relaxes this to the authenticated OAuth client.)
 
 ## Migrating from SSE to HTTP transport
 

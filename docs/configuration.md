@@ -101,7 +101,6 @@ services:
     image: ghcr.io/freema/openclaw-mcp:latest
     environment:
       - OPENCLAW_INSTANCES=[{"name":"prod","url":"http://prod-gw:18789","token":"tok1","default":true},{"name":"staging","url":"http://staging-gw:18789","token":"tok2"}]
-      - AUTH_ENABLED=true
       - MCP_CLIENT_ID=openclaw
       - MCP_CLIENT_SECRET=${MCP_CLIENT_SECRET}
 ```
@@ -114,6 +113,7 @@ services:
 | ------------- | ----------------------------------------------------------------- | ------------------------ |
 | `PORT`        | HTTP server port                                                  | `3000`                   |
 | `HOST`        | HTTP server host                                                  | `0.0.0.0`                |
+| `ALLOWED_HOSTS` | Extra hostnames accepted by DNS-rebinding protection            | (unset)                  |
 | `DEBUG`       | Enable debug logging                                              | `false`                  |
 | `TRUST_PROXY` | Express `trust proxy` setting (required behind a reverse proxy)   | (unset — trust nothing)  |
 
@@ -128,6 +128,16 @@ services:
 | `10.0.0.0/8`   | Trust a specific IP or CIDR range                                              |
 
 When `TRUST_PROXY` is unset and a reverse proxy injects an `X-Forwarded-For` header, the MCP SDK's `/token` handler crashes with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` and OAuth fails. Set this whenever the server is behind Caddy, nginx, Traefik, Cloudflare Tunnel, ngrok, or any other proxy.
+
+**`ALLOWED_HOSTS`:**
+
+When the server binds to a loopback address (`127.0.0.1`, `localhost`, `::1`), DNS-rebinding protection rejects any request whose `Host` header is not loopback with `403 Invalid Host`. That breaks the bare-metal pattern of a loopback bind fronted by a reverse proxy that preserves the public `Host` header (Tailscale Serve, nginx with `proxy_set_header Host $host`) — and the alternative, binding to `0.0.0.0`, would expose the port on every interface.
+
+Set `ALLOWED_HOSTS` to a comma-separated list of extra hostnames to accept (hostnames only — no scheme or port, IPv6 in brackets, case-insensitive). The loopback set stays accepted and protection stays enabled; on a non-loopback bind, setting `ALLOWED_HOSTS` turns Host validation on where it would otherwise be off.
+
+```bash
+HOST=127.0.0.1 ALLOWED_HOSTS=machine.tail-net.ts.net openclaw-mcp --transport http
+```
 
 ### CORS Configuration
 
@@ -154,11 +164,15 @@ directly.
 
 The server uses the MCP SDK's built-in OAuth 2.1 server with authorization code + PKCE flow. This is what Claude.ai requires for custom MCP connectors.
 
+OAuth is **mandatory** for the HTTP transport since 1.8.0: without `MCP_CLIENT_ID` and `MCP_CLIENT_SECRET` the server refuses to start. `AUTH_ENABLED=true` is still accepted but no longer needed; `AUTH_ENABLED=false` refuses to start. The only way to run without authentication is `MCP_DANGEROUSLY_DISABLE_AUTH=true` (`--dangerously-disable-auth`), e.g. when a proxy in front already authenticates every request. stdio is unaffected.
+
+**Async task ownership:** tasks created with `openclaw_chat_async` belong to the authenticated OAuth client, so a client that opens a new MCP session between tool calls can still poll them. Each dynamically registered client is a separate owner. Without auth (stdio, or `MCP_DANGEROUSLY_DISABLE_AUTH`) tasks are scoped to the MCP connection.
+
 | Variable            | Description                                                 | Required                   |
 | ------------------- | ----------------------------------------------------------- | -------------------------- |
-| `AUTH_ENABLED`      | Enable OAuth authentication (`true`/`false`)                | Yes for production         |
-| `MCP_CLIENT_ID`     | OAuth client ID (e.g., `openclaw`)                          | When auth enabled          |
-| `MCP_CLIENT_SECRET` | OAuth client secret                                         | When auth enabled          |
+| `MCP_CLIENT_ID`     | OAuth client ID (e.g., `openclaw`)                          | Yes (HTTP transport)       |
+| `MCP_CLIENT_SECRET` | OAuth client secret                                         | Yes (HTTP transport)       |
+| `MCP_DANGEROUSLY_DISABLE_AUTH` | Run the HTTP transport without OAuth (`true`/`false`) | Never, unless a proxy in front authenticates |
 | `MCP_ISSUER_URL`    | OAuth issuer URL override (e.g., `https://mcp.example.com`) | When behind HTTPS proxy    |
 | `MCP_REDIRECT_URIS` | Allowed redirect URIs (comma-separated)                     | Recommended for production |
 | `MCP_DANGEROUSLY_ALLOW_DCR`        | Enable Dynamic Client Registration (`true`/`false`)         | Dev only (see below)       |
