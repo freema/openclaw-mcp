@@ -52,7 +52,6 @@ echo "Client Secret: $MCP_CLIENT_SECRET"
 ### 2. Start server
 
 ```bash
-AUTH_ENABLED=true \
 MCP_CLIENT_ID=openclaw \
 MCP_CLIENT_SECRET=your-secret \
 CORS_ORIGINS=https://claude.ai \
@@ -96,12 +95,13 @@ Options:
   --port, -p          Port for HTTP server     [default: 3000]
   --host              Host for HTTP server     [default: "0.0.0.0"]
   --debug             Enable debug logging     [default: false]
-  --auth              Enable OAuth             [default: false]
+  --dangerously-disable-auth  Run HTTP without OAuth [env: MCP_DANGEROUSLY_DISABLE_AUTH]
   --client-id         MCP OAuth client ID      [env: MCP_CLIENT_ID]
   --client-secret     MCP OAuth client secret  [env: MCP_CLIENT_SECRET]
   --issuer-url        OAuth issuer URL         [env: MCP_ISSUER_URL]
   --redirect-uris     Allowed redirect URIs    [env: MCP_REDIRECT_URIS]
   --trust-proxy       Express trust proxy      [env: TRUST_PROXY]
+  --allowed-hosts     Extra Host names         [env: ALLOWED_HOSTS]
   --version           Show version number
   --help              Show help
 ```

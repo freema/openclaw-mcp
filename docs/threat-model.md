@@ -108,7 +108,7 @@ The MCP server is a **stateless proxy** — it translates MCP tool calls into Op
 
 If you expose this server beyond localhost:
 
-1. **Enable OAuth 2.1** — set `AUTH_ENABLED=true` with strong client credentials
+1. **Configure OAuth 2.1** — set `MCP_CLIENT_ID` and a strong `MCP_CLIENT_SECRET` (mandatory for the HTTP transport since 1.8.0; never use `MCP_DANGEROUSLY_DISABLE_AUTH` on a reachable bind)
 2. **Use HTTPS** — terminate TLS at a reverse proxy (Caddy recommended)
 3. **Restrict CORS** — set `CORS_ORIGINS=https://claude.ai` (or your specific origin)
 4. **Run in Docker** — use the provided `docker-compose.yml` with `read_only` and `no-new-privileges`

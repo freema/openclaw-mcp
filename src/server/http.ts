@@ -24,6 +24,7 @@ import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middlew
 
 import { OpenClawAuthProvider, type AuthProviderConfig } from '../auth/provider.js';
 import { log, logError } from '../utils/logger.js';
+import { isLoopbackHost } from './http-auth.js';
 import { createMcpServer, type ToolRegistrationDeps } from './tools-registration.js';
 
 export interface HttpServerConfig {
@@ -40,6 +41,13 @@ export interface HttpServerConfig {
    * Express default (`false`) untouched.
    */
   trustProxy?: boolean | number | string;
+  /**
+   * Extra hostnames accepted by DNS-rebinding protection, beyond the loopback
+   * set. Needed when a reverse proxy in front of a loopback bind preserves the
+   * public `Host` header (e.g. Tailscale Serve, nginx with `proxy_set_header
+   * Host $host`). Hostnames only, no scheme or port; IPv6 in brackets.
+   */
+  allowedHosts?: string[];
   /** Auth is enabled when authConfig is provided */
   authConfig?: AuthProviderConfig;
 }
@@ -64,6 +72,35 @@ export function parseTrustProxy(value: string | undefined): boolean | number | s
     return parseInt(trimmed, 10);
   }
   return trimmed;
+}
+
+/** Hostnames always accepted when Host validation is active. */
+const LOOPBACK_HOSTNAMES = ['localhost', '127.0.0.1', '[::1]'];
+
+/**
+ * Parse the ALLOWED_HOSTS env var / --allowed-hosts CLI flag: comma-separated
+ * hostnames, case-insensitive. Returns `undefined` when nothing usable is set.
+ */
+export function parseAllowedHosts(value: string | undefined): string[] | undefined {
+  if (!value) return undefined;
+  const hosts = value
+    .split(',')
+    .map((host) => host.trim().toLowerCase())
+    .filter((host) => host.length > 0);
+  return hosts.length > 0 ? hosts : undefined;
+}
+
+/**
+ * Decide whether Host validation applies and with which hostname list.
+ * Validation is on for loopback binds (DNS-rebinding protection) and whenever
+ * an explicit allowlist is configured; `null` means validation is disabled.
+ */
+export function resolveAllowedHostnames(
+  host: string,
+  allowedHosts: string[] | undefined
+): string[] | null {
+  if (!isLoopbackHost(host) && !allowedHosts?.length) return null;
+  return [...LOOPBACK_HOSTNAMES, ...(allowedHosts ?? [])];
 }
 
 // --- CORS helpers ---
@@ -146,8 +183,24 @@ export async function createHttpServer(
   const legacySseSessions = new Map<string, LegacySseSession>();
   const streamableSessions = new Map<string, StreamableSession>();
 
-  // Express app from SDK (includes JSON body parser + DNS rebinding protection)
-  const app = createMcpExpressApp({ host: config.host });
+  // Express app from SDK (includes JSON body parser + DNS rebinding protection).
+  // The SDK only validates Host for loopback binds, against loopback names.
+  // ALLOWED_HOSTS extends the accepted set for reverse proxies that preserve
+  // the public Host header (#41), and also turns validation on for
+  // non-loopback binds.
+  const allowedHostnames = resolveAllowedHostnames(config.host, config.allowedHosts);
+  const app = createMcpExpressApp({
+    host: config.host,
+    allowedHosts: allowedHostnames ?? undefined,
+  });
+  if (allowedHostnames) {
+    log(`DNS-rebinding protection: enabled (allowed hosts: ${allowedHostnames.join(', ')})`);
+  } else {
+    log(
+      `DNS-rebinding protection: disabled (HOST=${config.host} is not loopback and ` +
+        'ALLOWED_HOSTS is not set) — rely on OAuth, your reverse proxy and CORS_ORIGINS'
+    );
+  }
 
   // Configure Express `trust proxy` when running behind a reverse proxy.
   // Without this, `express-rate-limit` (used by the MCP SDK auth handlers)
@@ -377,7 +430,9 @@ export async function createHttpServer(
       log('  POST /authorize                                       - Authorization');
       log('  POST /token                                           - Token exchange');
     } else {
-      log('WARNING: Auth is DISABLED - server is open to anyone!');
+      logError(
+        'WARNING: Auth is DISABLED (MCP_DANGEROUSLY_DISABLE_AUTH) - server is open to anyone!'
+      );
     }
 
     log('MCP Endpoints:');

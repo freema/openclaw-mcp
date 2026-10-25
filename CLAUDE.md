@@ -13,7 +13,7 @@ This is a **security-critical** MCP server. Follow these rules:
 - Use the provided `docker-compose.yml` for the complete stack
 
 ### Authentication
-- OAuth 2.1 **MUST** be enabled in production (`AUTH_ENABLED=true`)
+- OAuth 2.1 is **mandatory** for the HTTP transport since 1.8.0 — the server refuses to start without `MCP_CLIENT_ID` + `MCP_CLIENT_SECRET` unless `MCP_DANGEROUSLY_DISABLE_AUTH=true` is set
 - Set `MCP_CLIENT_ID` and `MCP_CLIENT_SECRET` env vars
 - Generate secrets with: `openssl rand -hex 32`
 - Never commit secrets to the repository

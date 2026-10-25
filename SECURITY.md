@@ -18,7 +18,7 @@ OpenClaw MCP Bridge provides access to your AI assistant. **Proper security is c
 
 #### ✅ Required for Production
 
-- [ ] Enable OAuth authentication (`OAUTH_ENABLED=true`)
+- [ ] Configure OAuth (`MCP_CLIENT_ID` + `MCP_CLIENT_SECRET`; the HTTP transport refuses to start without them since 1.8.0)
 - [ ] Use HTTPS (deploy behind reverse proxy with TLS)
 - [ ] Set strong API keys or configure OAuth provider
 - [ ] Restrict network access (firewall rules)
