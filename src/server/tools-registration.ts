@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 
 import type { InstanceRegistry } from '../openclaw/registry.js';
 import { SERVER_ICON_SVG_BASE64 } from '../config/constants.js';
@@ -20,6 +21,28 @@ export interface ToolRegistrationDeps {
   registry: InstanceRegistry;
   serverName: string;
   serverVersion: string;
+}
+
+/**
+ * Decide who owns the async tasks created or queried by a tool call.
+ *
+ * With OAuth enabled the owner is the authenticated OAuth client, not the MCP
+ * connection, so a client that opens a new session between tool calls can
+ * still poll the tasks it created (#44). The OAuth client is the right trust
+ * boundary because the bridge is single-tenant: whoever holds the configured
+ * client's secret already has full chat access to the same OpenClaw gateway.
+ * Dynamically registered clients (MCP_DANGEROUSLY_ALLOW_DCR) each get their own
+ * client ID and therefore their own owner, so a freshly registered client
+ * still cannot see anyone else's tasks.
+ *
+ * Without an authenticated principal (stdio, or HTTP with auth explicitly
+ * disabled) ownership falls back to the per-connection ID.
+ */
+export function resolveTaskOwner(
+  authInfo: AuthInfo | undefined,
+  connectionOwnerId: string
+): string {
+  return authInfo?.clientId ? `client:${authInfo.clientId}` : `connection:${connectionOwnerId}`;
 }
 
 /**
@@ -51,26 +74,39 @@ export function createMcpServer(deps: ToolRegistrationDeps): Server {
 function registerTools(server: Server, deps: ToolRegistrationDeps): void {
   const { registry } = deps;
 
-  // Identity of this MCP connection, used to scope async tasks.
+  // Fallback identity for callers without an authenticated principal.
   //
-  // In stdio mode there is exactly one Server for the process lifetime, so
-  // behaviour is unchanged. In HTTP mode createMcpServer() is called once per
-  // connection, so each client gets its own namespace and cannot reach another
-  // client's tasks.
-  const ownerId = randomUUID();
+  // In stdio mode there is exactly one Server for the process lifetime, so this
+  // is the only owner. Unauthenticated HTTP has no identity to bind to, so each
+  // connection gets its own namespace and cannot reach another connection's
+  // tasks (it also cannot resume its own tasks after reconnecting).
+  const connectionOwnerId = randomUUID();
 
   const toolHandlers = new Map<
     string,
     (
-      input: unknown
+      input: unknown,
+      ownerId: string
     ) => Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }>
   >([
     ['openclaw_chat', (input) => tools.handleOpenclawChat(registry, input)],
     ['openclaw_status', (input) => tools.handleOpenclawStatus(registry, input)],
-    ['openclaw_chat_async', (input) => tools.handleOpenclawChatAsync(registry, input, ownerId)],
-    ['openclaw_task_status', (input) => tools.handleOpenclawTaskStatus(registry, input, ownerId)],
-    ['openclaw_task_list', (input) => tools.handleOpenclawTaskList(registry, input, ownerId)],
-    ['openclaw_task_cancel', (input) => tools.handleOpenclawTaskCancel(registry, input, ownerId)],
+    [
+      'openclaw_chat_async',
+      (input, ownerId) => tools.handleOpenclawChatAsync(registry, input, ownerId),
+    ],
+    [
+      'openclaw_task_status',
+      (input, ownerId) => tools.handleOpenclawTaskStatus(registry, input, ownerId),
+    ],
+    [
+      'openclaw_task_list',
+      (input, ownerId) => tools.handleOpenclawTaskList(registry, input, ownerId),
+    ],
+    [
+      'openclaw_task_cancel',
+      (input, ownerId) => tools.handleOpenclawTaskCancel(registry, input, ownerId),
+    ],
     ['openclaw_instances', (input) => tools.handleOpenclawInstances(registry, input)],
   ]);
 
@@ -88,7 +124,7 @@ function registerTools(server: Server, deps: ToolRegistrationDeps): void {
     return { tools: allTools };
   });
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: toolArgs } = request.params;
     log(`Executing tool: ${name}`);
 
@@ -98,7 +134,7 @@ function registerTools(server: Server, deps: ToolRegistrationDeps): void {
     }
 
     try {
-      return await handler(toolArgs);
+      return await handler(toolArgs, resolveTaskOwner(extra.authInfo, connectionOwnerId));
     } catch (error) {
       logError(`Error executing tool ${name}`, error);
       throw error;
