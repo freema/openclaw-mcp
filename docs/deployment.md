@@ -9,14 +9,15 @@ via `host.docker.internal`.
 ```yaml
 services:
   mcp-bridge:
-    build: .
+    image: ghcr.io/freema/openclaw-mcp:latest
     container_name: openclaw-mcp
     restart: unless-stopped
     ports:
-      - "${PORT:-3000}:3000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3000}:3000"
     environment:
       - OPENCLAW_URL=${OPENCLAW_URL:-http://host.docker.internal:18789}
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
+      - OPENCLAW_AGENT_ID=${OPENCLAW_AGENT_ID:-}
       - OPENCLAW_MODEL=${OPENCLAW_MODEL:-openclaw}
       - DEBUG=${DEBUG:-false}
       - MCP_CLIENT_ID=${MCP_CLIENT_ID:-openclaw}
@@ -35,15 +36,40 @@ services:
       resources:
         limits:
           memory: 256M
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges
 ```
+
+To build the image from source instead of pulling it, add
+`-f docker-compose.yml -f docker-compose.dev.yml` to the `docker compose` command.
+
+### The port is published on loopback only
+
+The bridge speaks plain HTTP and expects a TLS-terminating
+[reverse proxy](#reverse-proxy-https) in front of it. Since 1.8.1 the compose
+file publishes the port as `127.0.0.1:3000`, so the container is reachable from
+a proxy on the same host but not directly from the network. Docker publishes
+ports past host firewalls such as `ufw`, so an unqualified `3000:3000` is
+exposed even when the firewall says otherwise.
+
+- Proxy on the same host (nginx, Caddy, Tailscale Serve, Cloudflare Tunnel):
+  nothing to change, point it at `http://127.0.0.1:3000`.
+- Proxy in the same compose project: it reaches the bridge over the compose
+  network (`openclaw-mcp:3000`), the published port is not involved.
+- Proxy on another machine: set `BIND_ADDRESS=0.0.0.0` (or a specific
+  interface address) in `.env` and restrict the port to that machine with a
+  firewall.
 
 ## .env
 
 ```bash
 # Token for OpenClaw gateway authentication
 OPENCLAW_GATEWAY_TOKEN=your-gateway-token
+
+# Dedicated least-privilege OpenClaw agent for the bridge (strongly recommended)
+OPENCLAW_AGENT_ID=mcp-bridge
 
 # MCP OAuth client credentials
 # Generate secret with: openssl rand -hex 32
@@ -85,8 +111,32 @@ docker compose up -d
 - [ ] `MCP_REDIRECT_URIS` restricted to known callback URLs (for Claude.ai: `https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback`)
 - [ ] CORS restricted to known origins (`CORS_ORIGINS=https://claude.ai`)
 - [ ] `OPENCLAW_GATEWAY_TOKEN` set for gateway authentication
+- [ ] `OPENCLAW_AGENT_ID` points at a dedicated least-privilege agent, not your main agent (see [below](#use-a-least-privilege-openclaw-agent))
 - [ ] Dynamic client registration is disabled (default — no `/register` endpoint)
-- [ ] Container runs read-only with no-new-privileges
+- [ ] Bridge port published on `127.0.0.1` only (compose default since 1.8.1), reachable through the reverse proxy
+- [ ] Container runs read-only with `cap_drop: [ALL]` and `no-new-privileges`
+
+## Use a least-privilege OpenClaw agent
+
+OAuth decides who may talk to the bridge. It says nothing about what the text
+they send makes the OpenClaw agent do. Content that Claude reads — web pages,
+emails, documents — can carry instructions that end up in an `openclaw_chat`
+call, and the agent will act on them with every tool it has. If that agent can
+run shell commands, a successful prompt injection is remote code execution on
+your OpenClaw host. This is the biggest real-world risk of exposing OpenClaw
+through the bridge.
+
+Limit the blast radius on the OpenClaw side:
+
+1. Create a dedicated agent for the bridge instead of using your main one.
+2. Give it only the tools the Claude integration needs. Deny `exec`/`process`
+   and the file-writing tools unless you really need them, and run it
+   sandboxed. OpenClaw's
+   [multi-agent sandbox and tools](https://docs.openclaw.ai/tools/multi-agent-sandbox-tools)
+   documentation has the configuration keys for your version.
+3. Route the bridge to it with `OPENCLAW_AGENT_ID=<agent id>` (per instance:
+   `agentId` in `OPENCLAW_INSTANCES`). The gateway rejects an unknown agent ID
+   with `400` instead of falling back to the default agent.
 
 ## Reverse Proxy (HTTPS)
 
@@ -149,7 +199,7 @@ server {
     ssl_certificate_key /path/to/key.pem;
 
     location / {
-        proxy_pass http://localhost:3000;
+        proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";

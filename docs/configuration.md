@@ -18,6 +18,8 @@ All configuration can be done via environment variables. Copy `.env.example` to 
 
 > **Note:** An unrecognized `OPENCLAW_AGENT_ID` is rejected by the gateway with `400 Bad Request` (`"Unknown agent '<id>'."`) — it does **not** silently fall back to the default agent. A typo will surface as a loud error, not a silent misroute.
 
+> **Recommended:** point the bridge at a dedicated, least-privilege agent rather than your main one. Text from anything Claude reads can end up in an `openclaw_chat` call, so prompt injection into an agent with shell access is the biggest real-world risk of this setup. See [Use a least-privilege OpenClaw agent](deployment.md#use-a-least-privilege-openclaw-agent).
+
 ### Multi-Instance Mode
 
 Orchestrate multiple OpenClaw gateways from a single MCP server. Set `OPENCLAW_INSTANCES` as a JSON array — when present, it takes precedence over `OPENCLAW_URL` / `OPENCLAW_GATEWAY_TOKEN`.
@@ -116,6 +118,10 @@ services:
 | `ALLOWED_HOSTS` | Extra hostnames accepted by DNS-rebinding protection            | (unset)                  |
 | `DEBUG`       | Enable debug logging                                              | `false`                  |
 | `TRUST_PROXY` | Express `trust proxy` setting (required behind a reverse proxy)   | (unset — trust nothing)  |
+
+**Request body limit:**
+
+Request bodies on `POST /mcp` and the legacy `POST /messages` are limited to 4 MiB (4,194,304 bytes) and are only read after the bearer token has been verified; a larger body is answered with `413` and a JSON-RPC error. The limit is fixed: it comfortably fits the largest message the tools accept (100,000 characters) and matches the cap the MCP SDK applies itself. JSON-RPC batches are limited to 100 messages by the SDK. If a reverse proxy in front has a smaller limit (nginx: `client_max_body_size`, 1 MB by default), that one applies first.
 
 **`TRUST_PROXY` values:**
 

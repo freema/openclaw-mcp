@@ -8,71 +8,118 @@ OpenClaw MCP Bridge provides access to your AI assistant. **Proper security is c
 
 | Threat | Risk | Mitigation |
 |--------|------|------------|
-| Unauthorized access | High | OAuth2 authentication, API keys |
-| Token theft | High | Short-lived tokens, HTTPS only |
-| Man-in-the-middle | High | TLS 1.3, certificate validation |
-| Denial of service | Medium | Rate limiting, request size limits |
-| Information disclosure | Medium | Audit logging, minimal error details |
+| Unauthorized access | High | OAuth 2.1 is mandatory for the HTTP transport; port published on loopback behind a reverse proxy |
+| Prompt injection into the OpenClaw agent | High | Route the bridge to a least-privilege agent (`OPENCLAW_AGENT_ID`), see below |
+| Token theft | High | HTTPS only, 1-hour access tokens, rotating refresh tokens, `MCP_REDIRECT_URIS` allow-list |
+| Man-in-the-middle | High | TLS terminated at the reverse proxy |
+| Denial of service | Medium | Request body limit (4 MiB, enforced after authentication), SDK rate limits on the OAuth endpoints, container memory limit |
+| Information disclosure | Medium | JSON error responses without stack traces, credentials redacted from logs |
 
 ### Security Checklist
 
 #### ✅ Required for Production
 
 - [ ] Configure OAuth (`MCP_CLIENT_ID` + `MCP_CLIENT_SECRET`; the HTTP transport refuses to start without them since 1.8.0)
-- [ ] Use HTTPS (deploy behind reverse proxy with TLS)
-- [ ] Set strong API keys or configure OAuth provider
-- [ ] Restrict network access (firewall rules)
+- [ ] Generate the client secret with `openssl rand -hex 32` (32 characters minimum)
+- [ ] Use HTTPS (deploy behind a reverse proxy with TLS) and keep the bridge port off the public interface
+- [ ] Set `MCP_REDIRECT_URIS` to the callbacks of the clients you actually use
+- [ ] Point the bridge at a least-privilege OpenClaw agent (`OPENCLAW_AGENT_ID`)
 - [ ] Keep dependencies updated
 
 #### ✅ Recommended
 
-- [ ] Use short-lived OAuth tokens (15-60 minutes)
-- [ ] Enable audit logging
-- [ ] Set up rate limiting
-- [ ] Configure CORS restrictions
-- [ ] Monitor for suspicious activity
-- [ ] Regular security audits
+- [ ] Leave Dynamic Client Registration off (the default)
+- [ ] Leave CORS off unless a browser client needs it, then list explicit origins
+- [ ] Add rate limiting at the reverse proxy
+- [ ] Run the container read-only with `cap_drop: [ALL]` and `no-new-privileges` (the provided `docker-compose.yml` does)
+- [ ] Monitor the logs for suspicious activity
 
-### Authentication Methods
+### Authentication
 
-#### 1. OAuth2 Token Introspection (Recommended)
+**stdio transport** has no authentication: the server is a child process of the
+MCP client on the same machine, and whoever can start it already has the
+gateway token.
 
-Best for enterprise deployments with existing identity providers:
-
-```bash
-OAUTH_ENABLED=true
-OAUTH_INTROSPECTION_ENDPOINT=https://auth.company.com/oauth2/introspect
-OAUTH_CLIENT_ID=openclaw-mcp
-OAUTH_CLIENT_SECRET=your-client-secret
-OAUTH_REQUIRED_SCOPES=openclaw:read,openclaw:write
-```
-
-Supported providers:
-- Auth0
-- Keycloak
-- Okta
-- Azure AD
-- Any OAuth2-compliant provider
-
-#### 2. Static API Keys (Simple)
-
-For personal or small team deployments:
+**HTTP transport** uses the OAuth 2.1 authorization server built into the MCP
+SDK (authorization code + PKCE). It is mandatory: without credentials the
+server refuses to start.
 
 ```bash
-OAUTH_ENABLED=true
-API_KEYS=key-abc123,key-def456
+MCP_CLIENT_ID=openclaw
+MCP_CLIENT_SECRET=$(openssl rand -hex 32)
+# Recommended: only deliver authorization codes to callbacks you trust
+MCP_REDIRECT_URIS=https://claude.ai/api/mcp/auth_callback,https://claude.com/api/mcp/auth_callback
 ```
 
-Generate secure keys:
+How it works, and what it does not do:
+
+- **One pre-configured confidential client.** `MCP_CLIENT_ID` (3–64 chars) and
+  `MCP_CLIENT_SECRET` (at least 32 chars) are the credentials you enter in the
+  MCP client, e.g. the Claude.ai connector. The secret is checked at `/token`.
+- **No login or consent screen.** `/authorize` approves the pre-configured
+  client automatically. The client secret is the actual gate — treat it like a
+  password, and anyone who has it has full access to the bridge.
+- **Tokens are opaque and in memory.** Access tokens live for 1 hour, refresh
+  tokens for 24 hours and are rotated on use; `/revoke` is supported. A restart
+  drops all tokens and clients re-authenticate.
+- **Redirect URIs.** When `MCP_REDIRECT_URIS` is unset any `redirect_uri` is
+  accepted and the server logs a warning at startup. Set it in production.
+- **Dynamic Client Registration is off.** `MCP_DANGEROUSLY_ALLOW_DCR=true`
+  enables it for clients that need it (Cursor, Windsurf). Combined with the
+  automatic approval it lets anyone who can reach the server obtain a token, so
+  the server refuses to start with DCR on a non-loopback bind unless
+  `MCP_DANGEROUSLY_ALLOW_DCR_PUBLIC=true` is also set.
+- **No auth at all** is only possible with the explicit
+  `MCP_DANGEROUSLY_DISABLE_AUTH=true`, for setups where a proxy in front
+  authenticates every request.
+- **Not supported:** external identity providers, token introspection and
+  static API keys. If you need SSO, put an authenticating proxy in front.
+
+The bridge authenticates to the OpenClaw gateway with a separate bearer token,
+`OPENCLAW_GATEWAY_TOKEN`.
+
+See [Configuration](docs/configuration.md#authentication-oauth-21) for the full
+reference.
+
+### Prompt Injection and the OpenClaw Agent
+
+The bridge forwards text to an OpenClaw agent and returns its answer. It cannot
+judge what that text makes the agent do. Text that reaches Claude from a web
+page, an email or a document can end up in an `openclaw_chat` call, and if the
+agent behind the bridge can run shell commands, write files or send messages,
+so can that text. This is the largest real-world risk of running the bridge,
+and authentication does not help against it: the request comes from your own,
+correctly authenticated Claude session.
+
+**Do not connect the bridge to your main, fully privileged agent.** Create a
+dedicated OpenClaw agent for it with only the tools it needs, sandboxed, and
+select it with `OPENCLAW_AGENT_ID` (or `agentId` per instance):
+
 ```bash
-openssl rand -hex 32
+OPENCLAW_AGENT_ID=mcp-bridge
 ```
+
+On the OpenClaw side, deny that agent `exec`/`process` and the file-writing
+tools unless you need them, and run it sandboxed — see OpenClaw's
+[multi-agent sandbox and tools](https://docs.openclaw.ai/tools/multi-agent-sandbox-tools)
+documentation for the configuration keys of your OpenClaw version. An unknown
+agent ID is rejected by the gateway with `400`, it does not fall back to the
+default agent.
 
 ### Network Security
+
+The bridge speaks plain HTTP and expects a TLS-terminating reverse proxy in
+front. The provided `docker-compose.yml` publishes the port on `127.0.0.1`
+only, so it is reachable through the proxy but not directly from the network.
+Behind a proxy also set `MCP_ISSUER_URL` and `TRUST_PROXY` — see
+[Deployment](docs/deployment.md#reverse-proxy-https).
 
 #### Reverse Proxy Configuration (nginx)
 
 ```nginx
+# In the http {} block:
+limit_req_zone $binary_remote_addr zone=mcp:10m rate=10r/s;
+
 server {
     listen 443 ssl http2;
     server_name mcp.example.com;
@@ -82,7 +129,6 @@ server {
     ssl_protocols TLSv1.3;
 
     # Rate limiting
-    limit_req_zone $binary_remote_addr zone=mcp:10m rate=10r/s;
     limit_req zone=mcp burst=20 nodelay;
 
     # Security headers
@@ -91,7 +137,7 @@ server {
     add_header X-Frame-Options "DENY" always;
 
     location / {
-        proxy_pass http://localhost:3000;
+        proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";

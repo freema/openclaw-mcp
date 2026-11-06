@@ -7,18 +7,21 @@
  * - OAuth 2.1 authentication via MCP SDK (mcpAuthRouter + requireBearerAuth)
  * - .well-known discovery endpoints for OAuth metadata
  * - CORS support
+ * - Explicit request body limit, enforced after authentication
  * - Health check endpoint
  * - Graceful shutdown
  */
 
 import { randomUUID } from 'node:crypto';
+import { STATUS_CODES } from 'node:http';
 import type { IncomingMessage, ServerResponse, Server as HttpServer } from 'node:http';
-import type { Request, Response, NextFunction } from 'express';
+import express from 'express';
+import type { Express, Request, Response, NextFunction } from 'express';
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
+import { hostHeaderValidation } from '@modelcontextprotocol/sdk/server/middleware/hostHeaderValidation.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
 
@@ -26,6 +29,20 @@ import { OpenClawAuthProvider, type AuthProviderConfig } from '../auth/provider.
 import { log, logError } from '../utils/logger.js';
 import { isLoopbackHost } from './http-auth.js';
 import { createMcpServer, type ToolRegistrationDeps } from './tools-registration.js';
+
+/**
+ * Upper bound on an MCP request body (POST /mcp and POST /messages).
+ *
+ * `openclaw_chat` accepts messages of up to 100,000 characters — up to ~300 kB
+ * of UTF-8, more once JSON-escaped. Express' implicit 100 kB default (what the
+ * SDK's `createMcpExpressApp()` applies) rejected such messages with 413, so
+ * the limit is explicit. 4 MiB is the cap the MCP SDK uses whenever it reads a
+ * request body itself.
+ */
+export const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
+
+/** Routes whose JSON body is parsed after authentication, with the limit above. */
+const MCP_BODY_PATHS = new Set(['/mcp', '/messages']);
 
 export interface HttpServerConfig {
   port: number;
@@ -167,15 +184,79 @@ interface StreamableSession {
   server: Server;
 }
 
-// --- Main server factory ---
+// --- Error responses ---
 
 /**
- * Create and start the HTTP server with Streamable HTTP + legacy SSE transports.
+ * Final Express error handler. Body-parser failures (oversized or malformed
+ * JSON) and anything else that reaches Express would otherwise be answered by
+ * Express' default handler: an HTML page that includes the stack trace, with
+ * internal paths, unless NODE_ENV=production. Reply with a terse JSON error
+ * instead — JSON-RPC shaped on the MCP endpoints, OAuth shaped elsewhere.
  */
-export async function createHttpServer(
-  config: HttpServerConfig,
-  deps: ToolRegistrationDeps
-): Promise<void> {
+export function httpErrorHandler(
+  err: unknown,
+  req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+
+  const {
+    status: rawStatus,
+    type,
+    limit,
+  } = (err ?? {}) as { status?: unknown; type?: unknown; limit?: unknown };
+  const status =
+    typeof rawStatus === 'number' && Number.isInteger(rawStatus) && rawStatus >= 400
+      ? Math.min(rawStatus, 599)
+      : 500;
+
+  let code = -32000;
+  let message = STATUS_CODES[status] ?? 'Bad Request';
+  if (status === 413 && typeof limit === 'number') {
+    message = `Payload Too Large: request body must not exceed ${limit} bytes`;
+  } else if (type === 'entity.parse.failed') {
+    code = -32700;
+    message = 'Parse error: Invalid JSON';
+  } else if (status >= 500) {
+    code = -32603;
+    message = 'Internal server error';
+    logError(`Unhandled error on ${req.method} ${req.path}`, err);
+  }
+
+  if (MCP_BODY_PATHS.has(normalizePath(req.path))) {
+    res.status(status).json({ jsonrpc: '2.0', error: { code, message }, id: null });
+    return;
+  }
+  res.status(status).json({
+    error: status >= 500 ? 'server_error' : 'invalid_request',
+    error_description: message,
+  });
+}
+
+/** Express routes match case-insensitively and ignore a trailing slash; so does this. */
+function normalizePath(path: string): string {
+  return path.replace(/\/+$/, '').toLowerCase();
+}
+
+// --- Main server factory ---
+
+export interface HttpApp {
+  app: Express;
+  authEnabled: boolean;
+  corsConfig: { origins: string[]; enabled: boolean };
+  /** Close every open MCP session (used on shutdown). */
+  closeSessions: () => Promise<void>;
+}
+
+/**
+ * Build the Express app with Streamable HTTP + legacy SSE transports, without
+ * listening. Split from `createHttpServer` so tests can drive the real app.
+ */
+export function createHttpApp(config: HttpServerConfig, deps: ToolRegistrationDeps): HttpApp {
   const authEnabled = !!config.authConfig?.clientId;
   const corsConfig = loadCorsConfig();
 
@@ -183,17 +264,17 @@ export async function createHttpServer(
   const legacySseSessions = new Map<string, LegacySseSession>();
   const streamableSessions = new Map<string, StreamableSession>();
 
-  // Express app from SDK (includes JSON body parser + DNS rebinding protection).
-  // The SDK only validates Host for loopback binds, against loopback names.
-  // ALLOWED_HOSTS extends the accepted set for reverse proxies that preserve
-  // the public Host header (#41), and also turns validation on for
-  // non-loopback binds.
+  // The app is assembled here rather than with the SDK's createMcpExpressApp(),
+  // which installs a global express.json() with the implicit 100 kB limit in
+  // front of authentication. Host validation is the same SDK middleware.
+  //
+  // DNS-rebinding protection: on for loopback binds. ALLOWED_HOSTS extends the
+  // accepted set for reverse proxies that preserve the public Host header
+  // (#41), and also turns validation on for non-loopback binds.
+  const app: Express = express();
   const allowedHostnames = resolveAllowedHostnames(config.host, config.allowedHosts);
-  const app = createMcpExpressApp({
-    host: config.host,
-    allowedHosts: allowedHostnames ?? undefined,
-  });
   if (allowedHostnames) {
+    app.use(hostHeaderValidation(allowedHostnames));
     log(`DNS-rebinding protection: enabled (allowed hosts: ${allowedHostnames.join(', ')})`);
   } else {
     log(
@@ -242,6 +323,22 @@ export async function createHttpServer(
     next();
   });
 
+  // --- Body parsing ---
+  // The MCP endpoints get their body parsed after authentication, with the
+  // explicit limit, so an unauthenticated caller cannot make the server buffer
+  // and parse megabytes of JSON. Every other route keeps Express' default
+  // 100 kB JSON parser, exactly as before (the OAuth handlers additionally
+  // bring their own urlencoded/JSON parsers).
+  const defaultJsonParser = express.json();
+  const mcpJsonParser = express.json({ limit: MAX_REQUEST_BODY_BYTES });
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (MCP_BODY_PATHS.has(normalizePath(req.path))) {
+      next();
+      return;
+    }
+    defaultJsonParser(req, res, next);
+  });
+
   // --- OAuth routes (if auth enabled) ---
   let authMiddleware: ((req: Request, res: Response, next: NextFunction) => void) | undefined;
 
@@ -286,13 +383,13 @@ export async function createHttpServer(
     });
   });
 
-  // Helper to conditionally apply auth middleware
-  const withAuth = (handler: (req: Request, res: Response) => Promise<void>) => {
-    if (authMiddleware) {
-      return [authMiddleware, async (req: Request, res: Response) => handler(req, res)] as const;
-    }
-    return [async (req: Request, res: Response) => handler(req, res)] as const;
-  };
+  // Middleware chain for the MCP endpoints: bearer auth first (when enabled),
+  // then the size-limited JSON body parser, then the handler.
+  const withAuth = (handler: (req: Request, res: Response) => Promise<void>) => [
+    ...(authMiddleware ? [authMiddleware] : []),
+    mcpJsonParser,
+    async (req: Request, res: Response) => handler(req, res),
+  ];
 
   // --- Legacy SSE transport (GET /sse + POST /messages) — deprecated ---
 
@@ -408,12 +505,50 @@ export async function createHttpServer(
   app.post('/mcp', ...withAuth(handleStreamableRequest));
   app.delete('/mcp', ...withAuth(handleStreamableRequest));
 
+  // --- Error handler (last) ---
+  app.use(httpErrorHandler);
+
+  const closeSessions = async () => {
+    // Close all legacy SSE sessions
+    for (const [id, session] of legacySseSessions) {
+      try {
+        await session.server.close();
+      } catch (error) {
+        logError(`Error closing SSE session ${id}`, error);
+      }
+    }
+    legacySseSessions.clear();
+
+    // Close all streamable sessions
+    for (const [id, session] of streamableSessions) {
+      try {
+        await session.server.close();
+      } catch (error) {
+        logError(`Error closing streamable session ${id}`, error);
+      }
+    }
+    streamableSessions.clear();
+  };
+
+  return { app, authEnabled, corsConfig, closeSessions };
+}
+
+/**
+ * Create and start the HTTP server with Streamable HTTP + legacy SSE transports.
+ */
+export async function createHttpServer(
+  config: HttpServerConfig,
+  deps: ToolRegistrationDeps
+): Promise<void> {
+  const { app, authEnabled, corsConfig, closeSessions } = createHttpApp(config, deps);
+
   // --- Start server ---
 
   const httpServer: HttpServer = app.listen(config.port, config.host, () => {
     log(`HTTP server listening on ${config.host}:${config.port}`);
     log(`Auth enabled: ${authEnabled}`);
     log(`CORS origins: ${corsConfig.enabled ? corsConfig.origins.join(', ') : 'disabled'}`);
+    log(`Max MCP request body: ${MAX_REQUEST_BODY_BYTES} bytes`);
 
     if (corsConfig.origins.includes('*')) {
       logError(
@@ -447,25 +582,7 @@ export async function createHttpServer(
   const shutdown = async () => {
     log('Shutting down HTTP server...');
 
-    // Close all legacy SSE sessions
-    for (const [id, session] of legacySseSessions) {
-      try {
-        await session.server.close();
-      } catch (error) {
-        logError(`Error closing SSE session ${id}`, error);
-      }
-    }
-    legacySseSessions.clear();
-
-    // Close all streamable sessions
-    for (const [id, session] of streamableSessions) {
-      try {
-        await session.server.close();
-      } catch (error) {
-        logError(`Error closing streamable session ${id}`, error);
-      }
-    }
-    streamableSessions.clear();
+    await closeSessions();
 
     httpServer.close(() => {
       log('HTTP server stopped');

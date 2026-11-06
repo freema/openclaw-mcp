@@ -89,8 +89,10 @@ export function resolveHttpAuth(input: HttpAuthInput): HttpAuthResolution {
 
   if (!input.redirectUris || input.redirectUris.length === 0) {
     warnings.push(
-      'WARNING: MCP_REDIRECT_URIS not set — any redirect_uri will be accepted. ' +
-        'Set MCP_REDIRECT_URIS for production.'
+      'WARNING: MCP_REDIRECT_URIS is not set — /authorize accepts any redirect_uri, so an ' +
+        'authorization code can be sent to a callback you do not control. Set it in production, ' +
+        'e.g. for Claude: MCP_REDIRECT_URIS=https://claude.ai/api/mcp/auth_callback,' +
+        'https://claude.com/api/mcp/auth_callback'
     );
   }
 
