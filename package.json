@@ -47,8 +47,8 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "@types/yargs": "^17.0.32",
-    "@typescript-eslint/eslint-plugin": "^6.21.0",
-    "@typescript-eslint/parser": "^6.21.0",
+    "@typescript-eslint/eslint-plugin": "^8.72.1",
+    "@typescript-eslint/parser": "^8.72.1",
     "eslint": "^8.57.1",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-prettier": "^5.2.1",
@@ -56,7 +56,7 @@
     "tsup": "^8.0.0",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3",
-    "vitest": "^2.0.0"
+    "vitest": "^4.1.12"
   },
   "files": [
     "dist",
