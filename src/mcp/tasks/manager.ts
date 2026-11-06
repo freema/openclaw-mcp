@@ -7,10 +7,11 @@
  * Ownership
  * ---------
  * The manager is a process-wide singleton, but in HTTP mode a single process
- * serves many independent MCP connections. Every task is therefore tagged with
- * the `ownerId` of the connection that created it, and every read/write path
+ * serves many independent callers. Every task is therefore tagged with the
+ * `ownerId` of whoever created it — the authenticated OAuth client, see
+ * resolveTaskOwner() in src/server/mcp-server.ts — and every read/write path
  * reachable from a tool handler requires that same `ownerId`. A caller can
- * never observe or mutate a task belonging to another connection, even when it
+ * never observe or mutate a task belonging to another owner, even when it
  * knows (or guesses) the task ID.
  */
 
@@ -34,7 +35,7 @@ export interface Task {
   createdAt: Date;
   startedAt?: Date;
   completedAt?: Date;
-  /** Connection that owns this task. Never exposed to clients. */
+  /** Who owns this task. Never exposed to clients. */
   ownerId: string;
   sessionId?: string;
   instanceId?: string;
@@ -50,7 +51,7 @@ export interface Task {
 export interface TaskCreateOptions {
   type: 'chat';
   input: unknown;
-  /** Connection creating the task — required, see "Ownership" above. */
+  /** Who is creating the task — required, see "Ownership" above. */
   ownerId: string;
   sessionId?: string;
   instanceId?: string;
@@ -277,7 +278,7 @@ class TaskManager {
    * Get statistics for the tasks owned by `ownerId`.
    *
    * Scoped like everything else: a global total would leak how busy other
-   * connections are.
+   * callers are.
    */
   stats(ownerId: string): { total: number; byStatus: Record<TaskStatus, number> } {
     const byStatus: Record<TaskStatus, number> = {

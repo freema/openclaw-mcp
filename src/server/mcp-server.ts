@@ -10,6 +10,7 @@
  */
 
 import { McpServer } from '@modelcontextprotocol/server';
+import type { AuthInfo, ServerContext } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 
 import type { InstanceRegistry } from '../openclaw/registry.js';
@@ -22,6 +23,51 @@ export interface ToolRegistrationDeps {
   registry: InstanceRegistry;
   serverName: string;
   serverVersion: string;
+}
+
+export interface McpServerOptions {
+  /**
+   * Set by the HTTP transport when OAuth is on: every tool call must then carry
+   * an authenticated OAuth client, and a call without one is refused instead of
+   * falling back to the shared process owner.
+   */
+  authRequired?: boolean;
+}
+
+/**
+ * Owner of every async task created without an authenticated principal: the
+ * stdio transport, and HTTP with auth explicitly disabled
+ * (MCP_DANGEROUSLY_DISABLE_AUTH). The stateless HTTP transport has no
+ * per-connection identity to fall back to, so all such callers of one process
+ * share a single task namespace.
+ */
+export const PROCESS_TASK_OWNER = 'process';
+
+/**
+ * Decide who owns the async tasks created or queried by a tool call.
+ *
+ * With OAuth enabled the owner is the authenticated OAuth client. Requests are
+ * stateless, so this is what lets a client poll, list and cancel its own tasks
+ * across separate HTTP requests while never seeing another client's. The OAuth
+ * client is the right trust boundary because the bridge is single-tenant:
+ * whoever holds the configured client's secret already has full chat access to
+ * the same OpenClaw gateway. Dynamically registered clients
+ * (MCP_DANGEROUSLY_ALLOW_DCR) each get their own client ID and therefore their
+ * own owner.
+ *
+ * The `client:` prefix keeps the two namespaces apart: no client ID can ever
+ * resolve to {@link PROCESS_TASK_OWNER}.
+ */
+export function resolveTaskOwner(authInfo: AuthInfo | undefined, authRequired = false): string {
+  if (authInfo?.clientId) {
+    return `client:${authInfo.clientId}`;
+  }
+  if (authRequired) {
+    // Unreachable while requireBearerAuth guards /mcp. If that wiring ever
+    // breaks, fail closed rather than pool every client's tasks together.
+    throw new Error('Authenticated request carries no OAuth client identity');
+  }
+  return PROCESS_TASK_OWNER;
 }
 
 const SERVER_ICONS = [
@@ -42,28 +88,30 @@ const instanceField = z
   );
 
 /**
- * Wrap a tool handler with logging, mirroring the v1 CallTool dispatch.
- */
-function wrapHandler(
-  name: string,
-  handler: (input: unknown) => Promise<ToolResponse>
-): (args: unknown) => Promise<ToolResponse> {
-  return async (args: unknown) => {
-    log(`Executing tool: ${name}`);
-    try {
-      return await handler(args ?? {});
-    } catch (error) {
-      logError(`Error executing tool ${name}`, error);
-      throw error;
-    }
-  };
-}
-
-/**
  * Create a new MCP server instance with all tools registered.
  */
-export function createMcpServer(deps: ToolRegistrationDeps): McpServer {
+export function createMcpServer(
+  deps: ToolRegistrationDeps,
+  options: McpServerOptions = {}
+): McpServer {
   const { registry } = deps;
+  const authRequired = options.authRequired === true;
+
+  /**
+   * Wrap a tool handler with logging, mirroring the v1 CallTool dispatch, and
+   * hand it the task owner resolved from the request's validated access token.
+   */
+  const wrapHandler =
+    (name: string, handler: (input: unknown, ownerId: string) => Promise<ToolResponse>) =>
+    async (args: unknown, ctx: ServerContext): Promise<ToolResponse> => {
+      log(`Executing tool: ${name}`);
+      try {
+        return await handler(args ?? {}, resolveTaskOwner(ctx.http?.authInfo, authRequired));
+      } catch (error) {
+        logError(`Error executing tool ${name}`, error);
+        throw error;
+      }
+    };
 
   const server = new McpServer(
     {
@@ -126,7 +174,9 @@ export function createMcpServer(deps: ToolRegistrationDeps): McpServer {
         instance: instanceField,
       }),
     },
-    wrapHandler('openclaw_chat_async', (input) => tools.handleOpenclawChatAsync(registry, input))
+    wrapHandler('openclaw_chat_async', (input, ownerId) =>
+      tools.handleOpenclawChatAsync(registry, input, ownerId)
+    )
   );
 
   server.registerTool(
@@ -138,7 +188,9 @@ export function createMcpServer(deps: ToolRegistrationDeps): McpServer {
         task_id: z.string().describe('The task ID returned from openclaw_chat_async'),
       }),
     },
-    wrapHandler('openclaw_task_status', (input) => tools.handleOpenclawTaskStatus(registry, input))
+    wrapHandler('openclaw_task_status', (input, ownerId) =>
+      tools.handleOpenclawTaskStatus(registry, input, ownerId)
+    )
   );
 
   server.registerTool(
@@ -152,7 +204,9 @@ export function createMcpServer(deps: ToolRegistrationDeps): McpServer {
         instance: z.string().optional().describe('Filter by instance name'),
       }),
     },
-    wrapHandler('openclaw_task_list', (input) => tools.handleOpenclawTaskList(registry, input))
+    wrapHandler('openclaw_task_list', (input, ownerId) =>
+      tools.handleOpenclawTaskList(registry, input, ownerId)
+    )
   );
 
   server.registerTool(
@@ -164,7 +218,9 @@ export function createMcpServer(deps: ToolRegistrationDeps): McpServer {
         task_id: z.string().describe('The task ID to cancel'),
       }),
     },
-    wrapHandler('openclaw_task_cancel', (input) => tools.handleOpenclawTaskCancel(registry, input))
+    wrapHandler('openclaw_task_cancel', (input, ownerId) =>
+      tools.handleOpenclawTaskCancel(registry, input, ownerId)
+    )
   );
 
   return server;
