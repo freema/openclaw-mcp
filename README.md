@@ -45,7 +45,7 @@ services:
     container_name: openclaw-mcp
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"   # loopback only, reached through your reverse proxy
     environment:
       - OPENCLAW_URL=http://host.docker.internal:18789
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
@@ -60,9 +60,15 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     read_only: true
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges
 ```
+
+The port is published on `127.0.0.1` only: the bridge speaks plain HTTP and is
+meant to sit behind a TLS-terminating reverse proxy on the same host (see
+[Deployment](docs/deployment.md#reverse-proxy-https)).
 
 Generate secrets and start:
 
@@ -76,7 +82,9 @@ Then in Claude.ai add a custom MCP connector pointing to `https://your-domain.co
 
 > **Important:** The connector URL **must end with `/mcp`** — that's the Streamable HTTP endpoint. A bare domain (`https://your-domain.com`) hits the server root and returns 404 after OAuth completes.
 
-> **Tip:** Pin a specific version instead of `latest` for production: `ghcr.io/freema/openclaw-mcp:1.1.0`
+> **Tip:** Pin a specific version instead of `latest` for production: `ghcr.io/freema/openclaw-mcp:1.8.1`
+
+> **Use a least-privilege agent.** Set `OPENCLAW_AGENT_ID` to a dedicated OpenClaw agent that only has the tools you want Claude to reach — not your main agent with shell access. See [Security](#security).
 
 ### Local (Claude Desktop)
 
@@ -165,11 +173,10 @@ See [Installation Guide](docs/installation.md) for details.
 | `openclaw_task_list` | List your tasks with filtering |
 | `openclaw_task_cancel` | Cancel a pending task |
 
-Tasks are scoped to the MCP connection that created them. In HTTP mode, where
-one process serves many clients, a client can only see and cancel its own
-tasks — another client's `task_id` reads as "not found" even if it is known.
-Reconnecting starts a fresh scope, so poll a task on the connection that
-queued it.
+Tasks belong to whoever created them. In HTTP mode that is the authenticated
+OAuth client, so a client can poll its tasks from a new MCP session, and
+another client's `task_id` reads as "not found" even if it is known. Without
+an authenticated client (stdio) tasks are scoped to the connection.
 
 ## Multi-Instance Mode
 
@@ -276,6 +283,37 @@ CORS_ORIGINS=https://claude.ai,https://your-app.com
 ```
 
 See [Configuration](docs/configuration.md) for all security options.
+
+### Give the bridge a least-privilege agent
+
+The bridge passes text to an OpenClaw agent and cannot judge what that text
+makes the agent do. Anything Claude reads — a web page, an email, a document —
+can end up in an `openclaw_chat` call, so prompt injection into an agent that
+can run shell commands is the biggest real-world risk of this setup, and OAuth
+does not help against it. Do not point the bridge at your main agent: create a
+dedicated OpenClaw agent with only the tools it needs, sandboxed, and select it
+with `OPENCLAW_AGENT_ID`. Details in [SECURITY.md](SECURITY.md#prompt-injection-and-the-openclaw-agent)
+and the [Threat Model](docs/threat-model.md).
+
+### Upgrading to 1.8.1
+
+A security and maintenance release; no configuration changes are required.
+
+- **`docker-compose.yml` now publishes the port on `127.0.0.1` only.** If you
+  use the compose file from this repository and reach port 3000 directly from
+  another machine (no reverse proxy on the same host), it stops being
+  reachable after you update the file. Put a reverse proxy in front, or set
+  `BIND_ADDRESS=0.0.0.0` to restore the old binding. A compose file you
+  maintain yourself, and `docker run`, are not affected. The compose file also
+  drops all Linux capabilities (`cap_drop: [ALL]`).
+- **MCP SDK 1.32.2** with its security fixes; the Docker image runs on
+  Node.js 24. The npm package still supports Node.js ≥ 20.
+- **Request bodies** on `/mcp` and `/messages` are limited to 4 MiB and parsed
+  only after authentication. Long non-ASCII messages that used to fail with
+  `413` under the old implicit 100 kB limit now work; JSON-RPC batches are
+  capped at 100 messages by the SDK.
+
+See the [changelog](CHANGELOG.md) for the full list.
 
 ### Upgrading to 1.8.0
 

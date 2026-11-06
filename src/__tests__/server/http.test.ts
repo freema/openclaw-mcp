@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import http from 'node:http';
-import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
+import { InstanceRegistry } from '../../openclaw/registry.js';
 import {
+  createHttpApp,
   loadCorsConfig,
   isOriginAllowed,
   parseTrustProxy,
@@ -182,13 +183,14 @@ describe('resolveAllowedHostnames', () => {
 });
 
 describe('Host validation behind a reverse proxy (#41)', () => {
-  /** GET /health on a loopback-bound app, with an arbitrary Host header. */
+  /** GET /health on the real loopback-bound app, with an arbitrary Host header. */
   async function statusFor(allowedHosts: string[] | undefined, hostHeader: string) {
-    const allowed = resolveAllowedHostnames('127.0.0.1', allowedHosts);
-    const app = createMcpExpressApp({ host: '127.0.0.1', allowedHosts: allowed ?? undefined });
-    app.get('/health', (_req, res) => {
-      res.json({ status: 'ok' });
-    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const registry = new InstanceRegistry([{ name: 'default', url: 'http://127.0.0.1:1' }]);
+    const { app } = createHttpApp(
+      { port: 0, host: '127.0.0.1', allowedHosts },
+      { registry, serverName: 'test', serverVersion: '0.0.0' }
+    );
     const server = await new Promise<http.Server>((resolve) => {
       const s = app.listen(0, '127.0.0.1', () => resolve(s));
     });

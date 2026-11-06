@@ -3,16 +3,22 @@ services:
     image: ghcr.io/freema/openclaw-mcp:latest
     container_name: openclaw-mcp
     restart: unless-stopped
+    # Published on loopback only: put a TLS-terminating reverse proxy in front
+    # (see docs/deployment.md). Set BIND_ADDRESS=0.0.0.0 only if the proxy runs
+    # on another host and the port is firewalled to it.
     ports:
-      - "${PORT:-3000}:3000"
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3000}:3000"
     environment:
       - OPENCLAW_URL=${OPENCLAW_URL:-http://host.docker.internal:18789}
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-}
+      - OPENCLAW_AGENT_ID=${OPENCLAW_AGENT_ID:-}
       - OPENCLAW_MODEL=${OPENCLAW_MODEL:-openclaw}
       - DEBUG=${DEBUG:-false}
       - MCP_CLIENT_ID=${MCP_CLIENT_ID:-openclaw}
       - MCP_CLIENT_SECRET=${MCP_CLIENT_SECRET:-}
       - MCP_ISSUER_URL=${MCP_ISSUER_URL:-}
+      - MCP_REDIRECT_URIS=${MCP_REDIRECT_URIS:-}
+      - TRUST_PROXY=${TRUST_PROXY:-}
       - CORS_ORIGINS=${CORS_ORIGINS:-https://claude.ai}
       - NODE_ENV=production
     extra_hosts:
@@ -24,5 +30,7 @@ services:
       resources:
         limits:
           memory: 256M
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges
