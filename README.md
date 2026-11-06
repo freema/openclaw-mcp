@@ -14,6 +14,11 @@
 
 🦞 Model Context Protocol (MCP) server for [OpenClaw](https://github.com/openclaw/openclaw) AI assistant integration.
 
+> **This is the 2.0 beta line** (branch `v2`): MCP SDK v2, stateless Streamable HTTP, MCP specification 2026-07-28.
+> Install it with `npm install openclaw-mcp@beta` or `docker pull ghcr.io/freema/openclaw-mcp:2.0.0-beta.2`.
+> The stable release is **1.8.x** — `npm install openclaw-mcp`, `ghcr.io/freema/openclaw-mcp:latest`, documented on the [`main` branch](https://github.com/freema/openclaw-mcp/tree/main).
+> **Do not run 2.0.0-beta.1**: it has known vulnerabilities, see [Upgrading from 2.0.0-beta.1](#upgrading-from-200-beta1).
+
 ## Demo
 
 <p align="center">
@@ -45,13 +50,12 @@ services:
     container_name: openclaw-mcp
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"   # loopback only, reached through your reverse proxy
     environment:
       - OPENCLAW_URL=http://host.docker.internal:18789
       - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
       - OPENCLAW_AGENT_ID=${OPENCLAW_AGENT_ID:-}
       - OPENCLAW_MODEL=openclaw
-      - AUTH_ENABLED=true
       - MCP_CLIENT_ID=openclaw
       - MCP_CLIENT_SECRET=${MCP_CLIENT_SECRET}
       - MCP_ISSUER_URL=${MCP_ISSUER_URL:-}
@@ -61,9 +65,15 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     read_only: true
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges
 ```
+
+The port is published on `127.0.0.1` only: the bridge speaks plain HTTP and is
+meant to sit behind a TLS-terminating reverse proxy on the same host (see
+[Deployment](docs/deployment.md#reverse-proxy-https)).
 
 Generate secrets and start:
 
@@ -77,7 +87,9 @@ Then in Claude.ai add a custom MCP connector pointing to `https://your-domain.co
 
 > **Important:** The connector URL **must end with `/mcp`** — that's the Streamable HTTP endpoint. A bare domain (`https://your-domain.com`) hits the server root and returns 404 after OAuth completes.
 
-> **Tip:** Pin a specific version instead of `latest` for production: `ghcr.io/freema/openclaw-mcp:1.1.0`
+> **Tip:** Pin a specific version instead of `latest` for production: `ghcr.io/freema/openclaw-mcp:1.8.1`
+
+> **Use a least-privilege agent.** Set `OPENCLAW_AGENT_ID` to a dedicated OpenClaw agent that only has the tools you want Claude to reach — not your main agent with shell access. See [Security](#security).
 
 ### Local (Claude Desktop)
 
@@ -108,7 +120,7 @@ Add to your Claude Desktop config:
 ### Remote (Claude.ai) without Docker
 
 ```bash
-AUTH_ENABLED=true MCP_CLIENT_ID=openclaw MCP_CLIENT_SECRET=your-secret \
+MCP_CLIENT_ID=openclaw MCP_CLIENT_SECRET=your-secret \
   MCP_ISSUER_URL=https://mcp.your-domain.com \
   CORS_ORIGINS=https://claude.ai OPENCLAW_GATEWAY_TOKEN=your-gateway-token \
   npx openclaw-mcp --transport http --port 3000
@@ -166,11 +178,11 @@ See [Installation Guide](docs/installation.md) for details.
 | `openclaw_task_list` | List your tasks with filtering |
 | `openclaw_task_cancel` | Cancel a pending task |
 
-Tasks are scoped to the MCP connection that created them. In HTTP mode, where
-one process serves many clients, a client can only see and cancel its own
-tasks — another client's `task_id` reads as "not found" even if it is known.
-Reconnecting starts a fresh scope, so poll a task on the connection that
-queued it.
+Tasks belong to whoever created them. In HTTP mode that is the authenticated
+OAuth client: the transport is stateless, so the client can poll, list and
+cancel its tasks from any later request, and another client's `task_id` reads
+as "not found" even if it is known. Without an authenticated client (stdio, or
+HTTP with auth explicitly disabled) all tasks of the process share one owner.
 
 ## Multi-Instance Mode
 
@@ -265,7 +277,7 @@ See [Configuration — Multi-Instance Mode](docs/configuration.md#multi-instance
 export MCP_CLIENT_SECRET=$(openssl rand -hex 32)
 
 # Run with auth enabled
-AUTH_ENABLED=true MCP_CLIENT_ID=openclaw MCP_CLIENT_SECRET=$MCP_CLIENT_SECRET \
+MCP_CLIENT_ID=openclaw MCP_CLIENT_SECRET=$MCP_CLIENT_SECRET \
   openclaw-mcp --transport http
 ```
 
@@ -278,6 +290,87 @@ CORS_ORIGINS=https://claude.ai,https://your-app.com
 
 See [Configuration](docs/configuration.md) for all security options.
 
+### Give the bridge a least-privilege agent
+
+The bridge passes text to an OpenClaw agent and cannot judge what that text
+makes the agent do. Anything Claude reads — a web page, an email, a document —
+can end up in an `openclaw_chat` call, so prompt injection into an agent that
+can run shell commands is the biggest real-world risk of this setup, and OAuth
+does not help against it. Do not point the bridge at your main agent: create a
+dedicated OpenClaw agent with only the tools it needs, sandboxed, and select it
+with `OPENCLAW_AGENT_ID`. Details in [SECURITY.md](SECURITY.md#prompt-injection-and-the-openclaw-agent)
+and the [Threat Model](docs/threat-model.md).
+
+### Upgrading from 2.0.0-beta.1
+
+**2.0.0-beta.1 must not be used.** It was cut before the 1.7.0, 1.8.0 and
+1.8.1 security releases and has none of their fixes: HTTP mode runs without
+authentication unless `AUTH_ENABLED=true` is set, CORS defaults to `*`, and
+any caller can read and cancel any other caller's async tasks (task IDs were
+sequential). 2.0.0-beta.2 brings the 2.0 line to parity with 1.8.1 — everything
+in the three sections below applies to it, with these differences:
+
+- There is no `/messages` endpoint to limit; `/sse` and `/messages` answer
+  `410 Gone`.
+- The HTTP transport is stateless, so without an authenticated OAuth client
+  (stdio, or `MCP_DANGEROUSLY_DISABLE_AUTH=true`) there is no connection to
+  scope tasks to: all tasks of the process share one owner.
+- The MCP SDK packages are `@modelcontextprotocol/server` 2.4, `/node` 2.1.2
+  and `/express` 2.0.2, which carry the fixes 1.8.1 got from SDK 1.32.2.
+
+If you start the beta with `AUTH_ENABLED=false` or without
+`MCP_CLIENT_ID` / `MCP_CLIENT_SECRET`, it now refuses to start — see
+[Upgrading to 1.8.0](#upgrading-to-180).
+
+### Upgrading to 1.8.1
+
+A security and maintenance release; no configuration changes are required.
+
+- **`docker-compose.yml` now publishes the port on `127.0.0.1` only.** If you
+  use the compose file from this repository and reach port 3000 directly from
+  another machine (no reverse proxy on the same host), it stops being
+  reachable after you update the file. Put a reverse proxy in front, or set
+  `BIND_ADDRESS=0.0.0.0` to restore the old binding. A compose file you
+  maintain yourself, and `docker run`, are not affected. The compose file also
+  drops all Linux capabilities (`cap_drop: [ALL]`).
+- **MCP SDK 1.32.2** with its security fixes; the Docker image runs on
+  Node.js 24. The npm package still supports Node.js ≥ 20.
+- **Request bodies** on `/mcp` and `/messages` are limited to 4 MiB and parsed
+  only after authentication. Long non-ASCII messages that used to fail with
+  `413` under the old implicit 100 kB limit now work; JSON-RPC batches are
+  capped at 100 messages by the SDK.
+
+See the [changelog](CHANGELOG.md) for the full list.
+
+### Upgrading to 1.8.0
+
+**OAuth is now mandatory for the HTTP transport.** Before 1.8.0 HTTP mode ran
+without authentication unless `AUTH_ENABLED=true` was set, so a bare
+`docker run` of the image exposed every tool to anyone who could reach the
+port. Now:
+
+- Without `MCP_CLIENT_ID` and `MCP_CLIENT_SECRET` the server refuses to start.
+  `AUTH_ENABLED=true` still works but is no longer needed.
+- `AUTH_ENABLED=false` / `--no-auth` refuses to start instead of silently
+  disabling auth. If you really need an unauthenticated server (e.g. a proxy
+  in front already authenticates every request), set
+  `MCP_DANGEROUSLY_DISABLE_AUTH=true` (`--dangerously-disable-auth`).
+- stdio is unchanged.
+
+**Async tasks now belong to the OAuth client, not the MCP connection.** A
+client that opens a new MCP session between tool calls can poll the tasks it
+created ([#44](https://github.com/freema/openclaw-mcp/issues/44)). The bridge
+is single-tenant — whoever holds the client secret already has full access to
+the same OpenClaw gateway — so the OAuth client is the isolation boundary.
+Dynamically registered clients each get their own namespace. Without auth,
+tasks stay scoped to the connection.
+
+**New `ALLOWED_HOSTS`** for a loopback bind behind a reverse proxy that
+preserves the public `Host` header (Tailscale Serve, nginx with
+`proxy_set_header Host $host`), which previously failed with `403 Invalid Host`
+([#41](https://github.com/freema/openclaw-mcp/issues/41)). See
+[configuration](docs/configuration.md#server-settings-http-transport).
+
 ### Upgrading to 1.7.0
 
 Two defaults changed for security. Both only affect HTTP mode; stdio is
@@ -289,7 +382,7 @@ unchanged.
   `CORS_ORIGINS=*` to restore the old behaviour.
 - **Async tasks are scoped to the connection that created them.** A client
   that used to poll a `task_id` queued by a different connection will now get
-  "not found".
+  "not found". (1.8.0 relaxes this to the authenticated OAuth client.)
 
 ## Migrating from SSE to HTTP transport
 
@@ -317,12 +410,13 @@ unchanged.
 
 > **Note on protocol versions:** 2.0 runs on MCP SDK v2 and is stateless — it no longer keeps per-connection sessions. Clients still speaking the 2025-11-25 protocol (including current Claude.ai and Claude Desktop) are served through the SDK's built-in stateless legacy path and need no changes.
 
-## Roadmap — v2.0 (in development)
+## Roadmap — v2.0 (beta)
 
-Version 2.0 is being developed on the `v2` branch, targeting the [MCP 2026-07-28 specification](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/) on MCP SDK v2 (`@modelcontextprotocol/server`).
+Version 2.0 is developed on the `v2` branch and published as a prerelease (`openclaw-mcp@beta`), targeting the [MCP 2026-07-28 specification](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/) on MCP SDK v2 (`@modelcontextprotocol/server`).
 
 Done on the `v2` branch:
 
+- **Security parity with 1.8.1** (2.0.0-beta.2) — mandatory OAuth for HTTP, async tasks owned by the OAuth client, CORS off by default, `ALLOWED_HOSTS`, request body limits, JSON error responses
 - **Stateless protocol core** — no sessions; any instance can serve any request, so the server runs behind a plain load balancer. 2025-era clients (current Claude.ai / Claude Desktop) are served through the SDK's built-in legacy fallback.
 - **Streaming to the gateway** — async tasks use `stream: true` with an idle timeout (resets on every chunk), live progress (`progress_chars`), configurable concurrency (`OPENCLAW_TASK_CONCURRENCY`), and cancellation of running tasks (fixes [#31](https://github.com/freema/openclaw-mcp/issues/31))
 - **Own OAuth 2.1 authorization server** — SDK v2 is resource-server-only, so `/authorize`, `/token`, `/revoke`, `/register` and RFC 8414 metadata are implemented in-repo (PKCE S256, timing-safe client auth, refresh rotation, rate limiting)

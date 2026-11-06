@@ -202,7 +202,7 @@ export async function handleOpenclawTaskStatus(
   }
   const task_id = tidResult.value;
 
-  // Tasks owned by another connection read as "not found" — same message as a
+  // Tasks owned by someone else read as "not found" — same message as a
   // genuinely unknown ID, so this cannot be used to probe for their existence.
   const task = taskManager.get(task_id, ownerId);
   if (!task) {
@@ -327,7 +327,7 @@ export async function handleOpenclawTaskCancel(
   }
   const task_id = tidResult.value;
 
-  // Same as task_status: another connection's task is indistinguishable from
+  // Same as task_status: another owner's task is indistinguishable from
   // an unknown one.
   const task = taskManager.get(task_id, ownerId);
   if (!task) {

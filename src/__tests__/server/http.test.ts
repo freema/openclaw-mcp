@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import http from 'node:http';
+import { InstanceRegistry } from '../../openclaw/registry.js';
 import {
+  createHttpApp,
   loadCorsConfig,
   isOriginAllowed,
   parseTrustProxy,
@@ -176,5 +179,49 @@ describe('resolveAllowedHostnames', () => {
       ...LOOPBACK,
       'mcp.example.com',
     ]);
+  });
+});
+
+describe('Host validation behind a reverse proxy (#41)', () => {
+  /** GET /health on the real loopback-bound app, with an arbitrary Host header. */
+  async function statusFor(allowedHosts: string[] | undefined, hostHeader: string) {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const registry = new InstanceRegistry([{ name: 'default', url: 'http://127.0.0.1:1' }]);
+    const { app } = createHttpApp(
+      { port: 0, host: '127.0.0.1', allowedHosts },
+      { registry, serverName: 'test', serverVersion: '0.0.0' }
+    );
+    const server = await new Promise<http.Server>((resolve) => {
+      const s = app.listen(0, '127.0.0.1', () => resolve(s));
+    });
+    try {
+      const { port } = server.address() as { port: number };
+      return await new Promise<number>((resolve, reject) => {
+        http
+          .get(
+            { host: '127.0.0.1', port, path: '/health', headers: { host: hostHeader } },
+            (res) => {
+              res.resume();
+              resolve(res.statusCode ?? 0);
+            }
+          )
+          .on('error', reject);
+      });
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  }
+
+  it('rejects a proxied public Host header on a loopback bind by default', async () => {
+    expect(await statusFor(undefined, 'machine.tail-net.ts.net')).toBe(403);
+  });
+
+  it('accepts it once the hostname is in ALLOWED_HOSTS', async () => {
+    expect(await statusFor(['machine.tail-net.ts.net'], 'machine.tail-net.ts.net:443')).toBe(200);
+  });
+
+  it('keeps loopback names working and still rejects other hosts', async () => {
+    expect(await statusFor(['machine.tail-net.ts.net'], 'localhost:3000')).toBe(200);
+    expect(await statusFor(['machine.tail-net.ts.net'], 'evil.example.com')).toBe(403);
   });
 });

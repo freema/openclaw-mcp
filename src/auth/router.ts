@@ -29,6 +29,12 @@ export interface AuthRouterOptions {
   scopesSupported?: string[];
 }
 
+/**
+ * Upper bound on an OAuth request body, on every endpoint that reads one. No
+ * legitimate token, revocation or registration request comes anywhere near it.
+ */
+export const OAUTH_MAX_BODY_BYTES = 100 * 1024;
+
 const ERROR_STATUS: Record<string, number> = {
   [OAuthErrorCode.InvalidClient]: 401,
   [OAuthErrorCode.InvalidToken]: 401,
@@ -212,6 +218,14 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
   const revokeLimiter = makeLimiter(100);
   const registerLimiter = makeLimiter(20);
 
+  // Body parsers, applied per route after its rate limiter. RFC 6749 specifies
+  // form encoding for /token and /revoke; a JSON body is accepted as well
+  // because 1.x did (through an app-wide JSON parser) and rejecting it now
+  // would only break clients that relied on it. Whichever parser matches the
+  // Content-Type runs; the other one is a no-op.
+  const formParser = urlencoded({ extended: false, limit: OAUTH_MAX_BODY_BYTES });
+  const jsonParser = json({ limit: OAUTH_MAX_BODY_BYTES });
+
   // --- RFC 8414 Authorization Server metadata ---
   router.get('/.well-known/oauth-authorization-server', (_req, res) => {
     const metadata: Record<string, unknown> = {
@@ -338,7 +352,7 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
   });
 
   // --- Token endpoint ---
-  router.post('/token', tokenLimiter, urlencoded({ extended: false }), (req, res) => {
+  router.post('/token', tokenLimiter, formParser, jsonParser, (req, res) => {
     try {
       const client = authenticateClient(provider, req);
       const body = (req.body ?? {}) as Record<string, unknown>;
@@ -403,7 +417,7 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
   });
 
   // --- RFC 7009 revocation ---
-  router.post('/revoke', revokeLimiter, urlencoded({ extended: false }), (req, res) => {
+  router.post('/revoke', revokeLimiter, formParser, jsonParser, (req, res) => {
     try {
       const client = authenticateClient(provider, req);
       const token = firstString((req.body as Record<string, unknown>)?.token);
@@ -420,7 +434,7 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
 
   // --- RFC 7591 dynamic client registration (opt-in) ---
   if (provider.clientsStore.allowDynamicRegistration) {
-    router.post('/register', registerLimiter, json(), (req, res) => {
+    router.post('/register', registerLimiter, jsonParser, (req, res) => {
       try {
         const body = (req.body ?? {}) as Record<string, unknown>;
         const redirectUris = body.redirect_uris;

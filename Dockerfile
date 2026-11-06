@@ -1,5 +1,5 @@
 # ---- Builder stage ----
-FROM node:20-slim AS builder
+FROM node:24-slim AS builder
 
 WORKDIR /app
 
@@ -23,7 +23,7 @@ RUN npm run build
 RUN npm ci --omit=dev
 
 # ---- Runtime stage ----
-FROM node:20-slim AS runtime
+FROM node:24-slim AS runtime
 
 ARG VERSION=dev
 

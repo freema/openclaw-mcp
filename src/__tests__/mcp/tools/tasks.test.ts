@@ -2,8 +2,8 @@
  * Handler-level isolation tests.
  *
  * The manager tests cover the storage layer; these drive the actual tool
- * handlers the way a remote client would, and assert that a second connection
- * cannot read, list or cancel the first connection's tasks even when it knows
+ * handlers the way a remote client would, and assert that a second owner
+ * cannot read, list or cancel the first owner's tasks even when it knows
  * the exact task ID.
  */
 
@@ -20,9 +20,10 @@ import {
 
 vi.spyOn(console, 'error').mockImplementation(() => {});
 
-// Two MCP connections, as created per-connection in tools-registration.ts.
-const ALICE = 'conn-alice';
-const MALLORY = 'conn-mallory';
+// Two task owners, as resolveTaskOwner() in mcp-server.ts derives them from
+// the OAuth clients behind two requests.
+const ALICE = 'client:alice';
+const MALLORY = 'client:mallory';
 
 function text(response: { content: Array<{ text: string }> }): string {
   return response.content[0].text;
@@ -32,7 +33,7 @@ function json(response: { content: Array<{ text: string }> }): Record<string, un
   return JSON.parse(text(response));
 }
 
-describe('async task tools — cross-connection isolation', () => {
+describe('async task tools — cross-owner isolation', () => {
   let registry: InstanceRegistry;
 
   beforeEach(() => {
@@ -72,7 +73,7 @@ describe('async task tools — cross-connection isolation', () => {
     expect(json(response).task_id).toBe(taskId);
   });
 
-  it("hides another connection's task behind the same 'not found' error", async () => {
+  it("hides another owner's task behind the same 'not found' error", async () => {
     const taskId = await queueTaskAs(ALICE, 'confidential prompt');
 
     const response = await handleOpenclawTaskStatus(registry, { task_id: taskId }, MALLORY);
@@ -88,7 +89,7 @@ describe('async task tools — cross-connection isolation', () => {
     expect(text(unknown)).toBe('Error: Task not found: task_00000000-0000-4000-8000-000000000000');
   });
 
-  it("refuses to cancel another connection's task", async () => {
+  it("refuses to cancel another owner's task", async () => {
     const taskId = await queueTaskAs(ALICE, 'important work');
 
     const response = await handleOpenclawTaskCancel(registry, { task_id: taskId }, MALLORY);
@@ -107,7 +108,7 @@ describe('async task tools — cross-connection isolation', () => {
     expect(taskManager.get(taskId, ALICE)?.status).toBe('cancelled');
   });
 
-  it('scopes task_list and its stats to the calling connection', async () => {
+  it('scopes task_list and its stats to the calling owner', async () => {
     await queueTaskAs(ALICE, 'a1');
     await queueTaskAs(ALICE, 'a2');
     await queueTaskAs(MALLORY, 'm1');
@@ -121,7 +122,7 @@ describe('async task tools — cross-connection isolation', () => {
     expect((mallory.stats as { total: number }).total).toBe(1);
   });
 
-  it('does not leak across connections via the session_id filter', async () => {
+  it('does not leak across owners via the session_id filter', async () => {
     await handleOpenclawChatAsync(registry, { message: 'a', session_id: 'shared' }, ALICE);
 
     const mallory = json(await handleOpenclawTaskList(registry, { session_id: 'shared' }, MALLORY));

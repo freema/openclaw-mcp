@@ -79,6 +79,8 @@ jobs:
           files: openclaw-mcp-${{ github.ref_name }}.tar.gz
           generate_release_notes: true
           prerelease: ${{ steps.version.outputs.PRERELEASE == 'true' }}
+          # A prerelease must never become the repository's "Latest" release.
+          make_latest: ${{ steps.version.outputs.PRERELEASE == 'true' && 'false' || 'true' }}
           body: |
             ## Docker image
 

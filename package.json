@@ -1,6 +1,6 @@
 {
   "name": "openclaw-mcp",
-  "version": "2.0.0-beta.1",
+  "version": "2.0.0-beta.2",
   "mcpName": "io.github.freema/openclaw-mcp",
   "description": "Model Context Protocol (MCP) server for OpenClaw AI assistant integration",
   "author": "Tomáš Grasl <https://www.tomasgrasl.cz/>",
@@ -40,20 +40,21 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/express": "^2.0.0",
-    "@modelcontextprotocol/node": "^2.0.0",
-    "@modelcontextprotocol/server": "^2.0.0",
+    "@modelcontextprotocol/express": "^2.0.2",
+    "@modelcontextprotocol/node": "^2.1.2",
+    "@modelcontextprotocol/server": "^2.4.0",
     "express": "^5.2.1",
     "express-rate-limit": "^8.6.0",
     "yargs": "^17.7.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
     "@types/express": "^5.0.6",
     "@types/node": "^20.11.0",
     "@types/yargs": "^17.0.32",
-    "@typescript-eslint/eslint-plugin": "^6.21.0",
-    "@typescript-eslint/parser": "^6.21.0",
+    "@typescript-eslint/eslint-plugin": "^8.72.1",
+    "@typescript-eslint/parser": "^8.72.1",
     "eslint": "^8.57.1",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-prettier": "^5.2.1",
@@ -61,7 +62,7 @@
     "tsup": "^8.0.0",
     "tsx": "^4.7.0",
     "typescript": "^5.3.3",
-    "vitest": "^2.0.0"
+    "vitest": "^4.1.12"
   },
   "files": [
     "dist",
