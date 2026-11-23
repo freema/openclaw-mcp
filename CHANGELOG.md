@@ -13,8 +13,8 @@ entries record how the 2.0 line got here.
 First stable release of the 2.0 line: MCP SDK v2, the
 [MCP 2026-07-28 specification](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/),
 a stateless Streamable HTTP transport and streamed async tasks. The code is
-2.0.0-beta.2, which carries every 1.8.1 security fix; only the version and
-the documentation changed since. Tool names and inputs are the same as in
+2.0.0-beta.2, which carries every 1.8.1 security fix; since then only the
+version, the documentation and one CLI fix changed. Tool names and inputs are the same as in
 1.8.1, and Claude.ai / Claude Desktop need no change on their side.
 
 ### Summary of the 2.0 line
@@ -109,6 +109,10 @@ now, pin `openclaw-mcp@1.8.1` / `ghcr.io/freema/openclaw-mcp:1.8.1`.
 
 ### Changed since 2.0.0-beta.2
 
+- **Fixed:** a repeated CLI flag keeps its last value. The Docker image
+  already passes `--transport http`, so `docker run image --transport http`
+  turned the transport into an array and the server silently ran on stdio
+  (a detached container then exited at once). The bug existed in 1.x too.
 - Version 2.0.0; npm `latest`, Docker `latest` and the MCP Registry entry move
   to the 2.0 line.
 - Documentation describes 2.0 as the stable release: install commands without
