@@ -1,10 +1,126 @@
 # Changelog
 
 Notable changes to openclaw-mcp. Versions follow [Semantic Versioning](https://semver.org/).
-This is the changelog of the 2.0 line (branch `v2`, npm dist-tag `beta`); the
-stable 1.x line lives on `main`. Releases before 1.8.1 are described in the
+2.0 is the current stable line (npm dist-tag `latest`,
+`ghcr.io/freema/openclaw-mcp:latest`). The 1.x line ended with 1.8.1, listed
+at the end; earlier releases are described in the
 [GitHub releases](https://github.com/freema/openclaw-mcp/releases) and in the
-"Upgrading" sections of the [README](README.md#security).
+"Upgrading" sections of the [README](README.md#security). The 2.0.0-beta
+entries record how the 2.0 line got here.
+
+## 2.0.0 — 2026-11-23
+
+First stable release of the 2.0 line: MCP SDK v2, the
+[MCP 2026-07-28 specification](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/),
+a stateless Streamable HTTP transport and streamed async tasks. The code is
+2.0.0-beta.2, which carries every 1.8.1 security fix; only the version and
+the documentation changed since. Tool names and inputs are the same as in
+1.8.1, and Claude.ai / Claude Desktop need no change on their side.
+
+### Summary of the 2.0 line
+
+- **MCP SDK v2** (`@modelcontextprotocol/server`, `/node`, `/express`)
+  replaces `@modelcontextprotocol/sdk`. Clients on the 2026-07-28 protocol get
+  the new stateless protocol; clients still on 2025-11-25 (current Claude.ai
+  and Claude Desktop) are served through the SDK's stateless legacy path.
+- **Stateless Streamable HTTP at `/mcp`**, no per-connection sessions. The
+  legacy HTTP+SSE transport is gone.
+- **Streamed async tasks**: `openclaw_chat_async` streams from the gateway,
+  `OPENCLAW_TIMEOUT_MS` becomes an idle timeout for it, `openclaw_task_status`
+  reports live progress (`progress_chars`, `last_activity_at`), tasks run
+  concurrently and running tasks can be cancelled. This addresses tasks that
+  stayed "running" long after the gateway had finished
+  ([#31](https://github.com/freema/openclaw-mcp/issues/31)).
+- **Own OAuth 2.1 authorization server** (SDK v2 only provides the resource
+  server): PKCE S256, timing-safe client authentication, refresh-token
+  rotation, RFC 7009 revocation scoped to the issuing client, per-endpoint
+  rate limits.
+- **Security parity with 1.8.1**: mandatory OAuth for HTTP, async tasks owned
+  by the OAuth client, CORS off by default, `ALLOWED_HOSTS`, 4 MiB body limit
+  enforced after authentication, JSON error responses, loopback-only port in
+  `docker-compose.yml`.
+- zod v4 tool input schemas (JSON Schema 2020-12) with read-only annotations.
+
+### Breaking changes (from 1.8.1)
+
+- **`--transport sse` exits with an error** (in 1.x it was a deprecated alias
+  for `http`). `GET /sse` and `POST /messages` answer `410 Gone`; `/health`
+  reports `"legacySseSupported": false`. Use `--transport http` and `/mcp`.
+- **No MCP sessions on HTTP.** The server no longer issues or tracks
+  `Mcp-Session-Id`. Clients that depend on a stateful session must be
+  updated; Claude.ai and Claude Desktop work unchanged.
+- **Async tasks stream from the gateway.** `openclaw_chat_async` calls
+  `/v1/chat/completions` with `stream: true` and needs a gateway (and any
+  proxy in between) that answers with server-sent events. A gateway that
+  ignores `stream` and returns plain JSON makes async tasks fail with
+  "Gateway returned no streamed content". `openclaw_chat` still sends a plain
+  request.
+- **`OPENCLAW_TIMEOUT_MS` is an idle timeout for async tasks.** It resets on
+  every received chunk, so a task that keeps streaming is no longer killed
+  after 2 minutes; a streamed request is capped at 30 minutes overall. For
+  `openclaw_chat` and `openclaw_status` it is still an absolute timeout.
+- **Async tasks run in parallel**, 3 at a time by default
+  (`OPENCLAW_TASK_CONCURRENCY`, 1–20). 1.x ran them one after another.
+- **`openclaw_task_cancel` cancels running tasks** and aborts their gateway
+  request; 1.x only cancelled pending tasks.
+- **Task ownership without authentication.** With an OAuth client nothing
+  changes: tasks belong to the client. Without one (stdio, or HTTP with
+  `MCP_DANGEROUSLY_DISABLE_AUTH=true`) there is no connection to scope tasks
+  to, so all tasks of the process share one owner; 1.x scoped them to the
+  connection.
+- **`TRUST_PROXY=true` refuses to start while OAuth is enabled**: it would
+  make the client-controlled `X-Forwarded-For` entry the rate-limit key on the
+  OAuth endpoints. Use the number of proxy hops (`TRUST_PROXY=1`) or the
+  proxy's address range instead.
+- **The OAuth authorization server is new code.** Endpoints and metadata
+  paths are the same as in 1.x and the OAuth endpoints accept at most 100 kB.
+  Tokens still live in memory, so the restart for the upgrade makes clients
+  authorize again.
+- Tool inputs are validated with zod v4 schemas; `priority` on
+  `openclaw_chat_async` must be an integer.
+- For code that imports the package instead of running it:
+  `@modelcontextprotocol/sdk` is no longer a dependency, and
+  `OpenClawClient.chat(message, options)` replaces `chat(message, sessionId)`.
+
+### Upgrading from 1.x
+
+1. Start from a working 1.8.1 configuration. 2.0 reads the same environment
+   variables and CLI flags and applies the same mandatory-OAuth rules; see
+   the 1.7.0 / 1.8.0 / 1.8.1 notes in the README if you skipped those.
+2. Replace `--transport sse` with `--transport http` in CLI arguments and
+   service units, and point any client still using `/sse` at `/mcp`. The
+   Docker image already starts with `--transport http`; do not pass the flag
+   again in `docker run` or a compose `command:`.
+3. If you set `TRUST_PROXY=true`, change it to `TRUST_PROXY=1` (one reverse
+   proxy) or the proxy's address range.
+4. If you use the async tools, check that the gateway, and any proxy between
+   it and the bridge, passes streamed (`text/event-stream`) responses from
+   `/v1/chat/completions` through without buffering them.
+5. Choose `OPENCLAW_TASK_CONCURRENCY`: the default 3, or `1` to keep the 1.x
+   one-at-a-time behaviour if your agent cannot take parallel requests.
+   `OPENCLAW_TIMEOUT_MS` can usually stay: for async tasks it now only has to
+   cover the longest silence, not the whole answer.
+6. Update with `npm install -g openclaw-mcp@latest` (or `npx openclaw-mcp@2`),
+   or pull `ghcr.io/freema/openclaw-mcp:2.0.0`, and restart. Claude.ai and
+   other clients authorize again after the restart.
+
+`latest` on npm and GHCR moves to 2.0.0 with this release. To stay on 1.x for
+now, pin `openclaw-mcp@1.8.1` / `ghcr.io/freema/openclaw-mcp:1.8.1`.
+
+### Changed since 2.0.0-beta.2
+
+- Version 2.0.0; npm `latest`, Docker `latest` and the MCP Registry entry move
+  to the 2.0 line.
+- Documentation describes 2.0 as the stable release: install commands without
+  `@beta`, an "Upgrading to 2.0" section in the README, and a support table in
+  SECURITY.md with 1.8.x as the previous line.
+- Documentation no longer claims that several instances can sit behind a
+  round-robin load balancer: the MCP protocol layer is stateless, but OAuth
+  tokens and async tasks live in process memory, so run one instance or send
+  each client to the same one.
+- Not part of 2.0.0, moved to the roadmap: structured tool outputs, Client ID
+  Metadata Documents, protocol-native Tasks (the SDK still ships no tasks
+  runtime).
 
 ## 2.0.0-beta.2 — 2026-11-06
 

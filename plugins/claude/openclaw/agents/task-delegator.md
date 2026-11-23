@@ -23,7 +23,7 @@ When given a task to delegate, send it to OpenClaw asynchronously and monitor un
 | `openclaw_chat_async` | Queue a message, get task_id |
 | `openclaw_task_status` | Check task progress |
 | `openclaw_task_list` | List all tasks |
-| `openclaw_task_cancel` | Cancel pending task |
+| `openclaw_task_cancel` | Cancel a pending or running task |
 
 ## Guidelines
 

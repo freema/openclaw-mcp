@@ -7,14 +7,14 @@
     "url": "https://github.com/freema/openclaw-mcp",
     "source": "github"
   },
-  "version": "2.0.0-beta.2",
+  "version": "2.0.0",
   "websiteUrl": "https://openclaw-mcp.cloud",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "openclaw-mcp",
-      "version": "2.0.0-beta.2",
+      "version": "2.0.0",
       "transport": {
         "type": "stdio"
       },
@@ -39,7 +39,7 @@
         },
         {
           "name": "OPENCLAW_TIMEOUT_MS",
-          "description": "Request timeout in milliseconds",
+          "description": "Gateway request timeout in milliseconds (idle timeout for streamed async tasks)",
           "default": "120000",
           "isRequired": false
         }
@@ -47,7 +47,7 @@
     },
     {
       "registryType": "oci",
-      "identifier": "ghcr.io/freema/openclaw-mcp:2.0.0-beta.2",
+      "identifier": "ghcr.io/freema/openclaw-mcp:2.0.0",
       "transport": {
         "type": "stdio"
       },

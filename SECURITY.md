@@ -181,8 +181,9 @@ npm update -g openclaw-mcp
 
 | Version | Status |
 |---------|--------|
-| 1.8.x | Stable, supported |
-| 2.0.0-beta.2 and later | Prerelease of the 2.0 line, carries the same fixes as 1.8.x |
+| 2.0.x | Stable, supported |
+| 1.8.x | Previous line; security fixes until further notice |
+| 2.0.0-beta.2 | Prerelease, superseded by 2.0.0 (same code); upgrade |
 | 2.0.0-beta.1 | **Do not use.** HTTP mode runs without authentication unless `AUTH_ENABLED=true` is set and sends `Access-Control-Allow-Origin: *` by default ([GHSA-f99f-69fc-572v](https://github.com/freema/openclaw-mcp/security/advisories/GHSA-f99f-69fc-572v), [GHSA-xp77-pwm3-v4qr](https://github.com/freema/openclaw-mcp/security/advisories/GHSA-xp77-pwm3-v4qr)); async tasks have guessable IDs and no ownership checks, the flaw fixed for 1.x in 1.7.0 ([GHSA-j2fg-4r2j-424f](https://github.com/freema/openclaw-mcp/security/advisories/GHSA-j2fg-4r2j-424f), [GHSA-c4qg-mg2r-2c56](https://github.com/freema/openclaw-mcp/security/advisories/GHSA-c4qg-mg2r-2c56)) |
 | < 1.8.0 | Unsupported, upgrade |
 

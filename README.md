@@ -14,9 +14,9 @@
 
 🦞 Model Context Protocol (MCP) server for [OpenClaw](https://github.com/openclaw/openclaw) AI assistant integration.
 
-> **This is the 2.0 beta line** (branch `v2`): MCP SDK v2, stateless Streamable HTTP, MCP specification 2026-07-28.
-> Install it with `npm install openclaw-mcp@beta` or `docker pull ghcr.io/freema/openclaw-mcp:2.0.0-beta.2`.
-> The stable release is **1.8.x** — `npm install openclaw-mcp`, `ghcr.io/freema/openclaw-mcp:latest`, documented on the [`main` branch](https://github.com/freema/openclaw-mcp/tree/main).
+> **2.0 is here**: MCP SDK v2, stateless Streamable HTTP, MCP specification 2026-07-28, streamed async tasks.
+> Coming from 1.x? Read [Upgrading to 2.0.0](#upgrading-to-200) — the legacy SSE transport is gone and async tasks behave differently.
+> To stay on 1.x for now, pin `openclaw-mcp@1.8.1` / `ghcr.io/freema/openclaw-mcp:1.8.1`.
 > **Do not run 2.0.0-beta.1**: it has known vulnerabilities, see [Upgrading from 2.0.0-beta.1](#upgrading-from-200-beta1).
 
 ## Demo
@@ -87,7 +87,7 @@ Then in Claude.ai add a custom MCP connector pointing to `https://your-domain.co
 
 > **Important:** The connector URL **must end with `/mcp`** — that's the Streamable HTTP endpoint. A bare domain (`https://your-domain.com`) hits the server root and returns 404 after OAuth completes.
 
-> **Tip:** Pin a specific version instead of `latest` for production: `ghcr.io/freema/openclaw-mcp:1.8.1`
+> **Tip:** Pin a specific version instead of `latest` for production: `ghcr.io/freema/openclaw-mcp:2.0.0`
 
 > **Use a least-privilege agent.** Set `OPENCLAW_AGENT_ID` to a dedicated OpenClaw agent that only has the tools you want Claude to reach — not your main agent with shell access. See [Security](#security).
 
@@ -176,7 +176,12 @@ See [Installation Guide](docs/installation.md) for details.
 | `openclaw_chat_async` | Queue a message, get task_id immediately |
 | `openclaw_task_status` | Check task progress and get results |
 | `openclaw_task_list` | List your tasks with filtering |
-| `openclaw_task_cancel` | Cancel a pending task |
+| `openclaw_task_cancel` | Cancel a pending or running task |
+
+Async tasks stream from the gateway, so `openclaw_task_status` shows live
+progress (`progress_chars`, `last_activity_at`) while a task runs, and
+`OPENCLAW_TIMEOUT_MS` only aborts a task when the stream goes silent. Up to
+`OPENCLAW_TASK_CONCURRENCY` tasks (default 3) run at the same time.
 
 Tasks belong to whoever created them. In HTTP mode that is the authenticated
 OAuth client: the transport is stateless, so the client can poll, list and
@@ -301,6 +306,47 @@ dedicated OpenClaw agent with only the tools it needs, sandboxed, and select it
 with `OPENCLAW_AGENT_ID`. Details in [SECURITY.md](SECURITY.md#prompt-injection-and-the-openclaw-agent)
 and the [Threat Model](docs/threat-model.md).
 
+### Upgrading to 2.0.0
+
+2.0 moves to MCP SDK v2 and the 2026-07-28 specification. Tool names and
+inputs are unchanged and Claude.ai / Claude Desktop need no change on their
+side, but a few things behave differently from 1.8.1:
+
+- **The legacy SSE transport is removed.** `--transport sse` exits with an
+  error (it used to be an alias for `http`), and `GET /sse` / `POST /messages`
+  answer `410 Gone`. Use `--transport http` and the `/mcp` endpoint, see
+  [Migrating from SSE to HTTP transport](#migrating-from-sse-to-http-transport).
+- **HTTP is stateless**: no `Mcp-Session-Id` sessions. Clients that depend on
+  a stateful session must be updated.
+- **Async tasks stream from the gateway** (`stream: true`). The gateway and
+  any proxy in between must pass `text/event-stream` responses through;
+  a gateway that only answers with plain JSON makes async tasks fail.
+- **`OPENCLAW_TIMEOUT_MS` is an idle timeout for async tasks**: it resets on
+  every chunk, and a streamed request is capped at 30 minutes. For
+  `openclaw_chat` and `openclaw_status` it is still an absolute timeout.
+- **Async tasks run in parallel**, 3 at a time by default. Set
+  `OPENCLAW_TASK_CONCURRENCY=1` to keep the 1.x one-at-a-time behaviour.
+- **`openclaw_task_cancel` also cancels running tasks** and aborts their
+  gateway request.
+- **Without authentication** (stdio, or `MCP_DANGEROUSLY_DISABLE_AUTH=true`)
+  all tasks of the process share one owner; 1.x scoped them to the
+  connection. With OAuth, tasks belong to the OAuth client as before.
+- **`TRUST_PROXY=true` refuses to start** while OAuth is enabled. Use
+  `TRUST_PROXY=1` (one reverse proxy) or the proxy's address range.
+- OAuth tokens live in memory, so clients authorize again after the restart.
+
+Steps:
+
+1. Replace `--transport sse` with `--transport http` wherever you start the
+   server (the Docker image already passes `--transport http`, do not add it
+   again), and `TRUST_PROXY=true` with `TRUST_PROXY=1`.
+2. If you use the async tools, make sure streamed responses from the gateway
+   reach the bridge unbuffered, and pick `OPENCLAW_TASK_CONCURRENCY`.
+3. Update (`npm install -g openclaw-mcp@latest`, or
+   `ghcr.io/freema/openclaw-mcp:2.0.0`) and restart.
+
+The full list is in the [changelog](CHANGELOG.md#200--2026-11-23).
+
 ### Upgrading from 2.0.0-beta.1
 
 **2.0.0-beta.1 must not be used.** It was cut before the 1.7.0, 1.8.0 and
@@ -318,8 +364,8 @@ in the three sections below applies to it, with these differences:
 - The MCP SDK packages are `@modelcontextprotocol/server` 2.4, `/node` 2.1.2
   and `/express` 2.0.2, which carry the fixes 1.8.1 got from SDK 1.32.2.
 
-If you start the beta with `AUTH_ENABLED=false` or without
-`MCP_CLIENT_ID` / `MCP_CLIENT_SECRET`, it now refuses to start — see
+If you start 2.0 with `AUTH_ENABLED=false` or without
+`MCP_CLIENT_ID` / `MCP_CLIENT_SECRET`, it refuses to start — see
 [Upgrading to 1.8.0](#upgrading-to-180).
 
 ### Upgrading to 1.8.1
@@ -410,27 +456,22 @@ unchanged.
 
 > **Note on protocol versions:** 2.0 runs on MCP SDK v2 and is stateless — it no longer keeps per-connection sessions. Clients still speaking the 2025-11-25 protocol (including current Claude.ai and Claude Desktop) are served through the SDK's built-in stateless legacy path and need no changes.
 
-## Roadmap — v2.0 (beta)
+## What's in 2.0
 
-Version 2.0 is developed on the `v2` branch and published as a prerelease (`openclaw-mcp@beta`), targeting the [MCP 2026-07-28 specification](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/) on MCP SDK v2 (`@modelcontextprotocol/server`).
+Version 2.0 targets the [MCP 2026-07-28 specification](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/) on MCP SDK v2 (`@modelcontextprotocol/server`):
 
-Done on the `v2` branch:
-
-- **Security parity with 1.8.1** (2.0.0-beta.2) — mandatory OAuth for HTTP, async tasks owned by the OAuth client, CORS off by default, `ALLOWED_HOSTS`, request body limits, JSON error responses
-- **Stateless protocol core** — no sessions; any instance can serve any request, so the server runs behind a plain load balancer. 2025-era clients (current Claude.ai / Claude Desktop) are served through the SDK's built-in legacy fallback.
-- **Streaming to the gateway** — async tasks use `stream: true` with an idle timeout (resets on every chunk), live progress (`progress_chars`), configurable concurrency (`OPENCLAW_TASK_CONCURRENCY`), and cancellation of running tasks (fixes [#31](https://github.com/freema/openclaw-mcp/issues/31))
+- **Stateless protocol core** — no MCP sessions; 2025-era clients (current Claude.ai / Claude Desktop) are served through the SDK's built-in legacy fallback. OAuth tokens and async tasks still live in process memory, so run a single instance (or route each client to the same instance); a round-robin load balancer across several instances would lose tokens and tasks between requests.
+- **Streaming to the gateway** — async tasks use `stream: true` with an idle timeout (resets on every chunk), live progress (`progress_chars`), configurable concurrency (`OPENCLAW_TASK_CONCURRENCY`), and cancellation of running tasks (addresses [#31](https://github.com/freema/openclaw-mcp/issues/31))
 - **Own OAuth 2.1 authorization server** — SDK v2 is resource-server-only, so `/authorize`, `/token`, `/revoke`, `/register` and RFC 8414 metadata are implemented in-repo (PKCE S256, timing-safe client auth, refresh rotation, rate limiting)
+- **Security parity with 1.8.1** — mandatory OAuth for HTTP, async tasks owned by the OAuth client, CORS off by default, `ALLOWED_HOSTS`, request body limits, JSON error responses
 - **zod v4 tool schemas** (JSON Schema 2020-12) and tool annotations
 - **Legacy SSE transport removed** — `/sse` and `/messages` answer 410 Gone
 
-Planned before 2.0.0 final:
+## Roadmap
 
 - **Structured tool outputs** (`outputSchema` + `structuredContent`)
 - **Client ID Metadata Documents** as the successor to Dynamic Client Registration
-- **Protocol-native Tasks** (`io.modelcontextprotocol/tasks` extension) — will replace the custom async task tools once the SDK ships a tasks runtime (v2.0.0-beta.4 defines only the wire vocabulary)
-- Docs refresh + migration guide from 1.x
-
-v1.x remains the stable release until 2.0 ships.
+- **Protocol-native Tasks** (`io.modelcontextprotocol/tasks` extension) — will replace the custom async task tools once the SDK ships a tasks runtime (so far it defines only the wire vocabulary)
 
 ## Requirements
 

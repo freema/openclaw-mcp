@@ -4,8 +4,8 @@
  * Provides an Express HTTP server with:
  * - Stateless Streamable HTTP MCP endpoint (ALL /mcp) via createMcpHandler.
  *   2026-07-28-era clients are served per-request; 2025-era clients fall back
- *   to the SDK's stateless legacy mode. No sessions — any instance can serve
- *   any request, so the server works behind a plain load balancer.
+ *   to the SDK's stateless legacy mode. No MCP sessions; OAuth tokens and
+ *   async tasks still live in process memory, so run a single instance.
  * - OAuth 2.1 authorization server (src/auth/router.ts) + bearer-gated /mcp
  * - .well-known discovery endpoints for OAuth metadata
  * - CORS support (opt-in)
