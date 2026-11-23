@@ -4,7 +4,6 @@
  * Provides async/background task management for long-running operations.
  */
 
-import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { InstanceRegistry } from '../../openclaw/registry.js';
 import { successResponse, errorResponse, type ToolResponse } from '../../utils/response-helpers.js';
 import { taskManager, type Task, type TaskStatus } from '../tasks/manager.js';
@@ -12,97 +11,28 @@ import { log } from '../../utils/logger.js';
 import { validateInputIsObject, validateMessage, validateId } from '../../utils/validation.js';
 
 // ============================================================================
-// Tool Definitions
-// ============================================================================
-
-export const openclawChatAsyncTool: Tool = {
-  name: 'openclaw_chat_async',
-  description:
-    'Send a message to OpenClaw asynchronously. Returns a task_id immediately that can be polled for results. Use this for potentially long-running conversations.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      message: {
-        type: 'string',
-        description: 'The message to send to OpenClaw',
-      },
-      session_id: {
-        type: 'string',
-        description: 'Optional session ID for conversation context',
-      },
-      priority: {
-        type: 'number',
-        description: 'Task priority (higher = processed first). Default: 0',
-      },
-      instance: {
-        type: 'string',
-        description: 'Target OpenClaw instance name. Defaults to the default instance.',
-      },
-    },
-    required: ['message'],
-  },
-};
-
-export const openclawTaskStatusTool: Tool = {
-  name: 'openclaw_task_status',
-  description: 'Check the status of an async task. Returns status, and result if completed.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'The task ID returned from openclaw_chat_async',
-      },
-    },
-    required: ['task_id'],
-  },
-};
-
-export const openclawTaskListTool: Tool = {
-  name: 'openclaw_task_list',
-  description: 'List all tasks. Optionally filter by status, session, or instance.',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      status: {
-        type: 'string',
-        enum: ['pending', 'running', 'completed', 'failed', 'cancelled'],
-        description: 'Filter by task status',
-      },
-      session_id: {
-        type: 'string',
-        description: 'Filter by session ID',
-      },
-      instance: {
-        type: 'string',
-        description: 'Filter by instance name',
-      },
-    },
-    required: [],
-  },
-};
-
-export const openclawTaskCancelTool: Tool = {
-  name: 'openclaw_task_cancel',
-  description: "Cancel a pending task. Only works for tasks that haven't started yet.",
-  inputSchema: {
-    type: 'object',
-    properties: {
-      task_id: {
-        type: 'string',
-        description: 'The task ID to cancel',
-      },
-    },
-    required: ['task_id'],
-  },
-};
-
-// ============================================================================
 // Background Task Processor
 // ============================================================================
 
+const DEFAULT_TASK_CONCURRENCY = 3;
+const MAX_TASK_CONCURRENCY = 20;
+
 let processorRunning = false;
 let processorRegistry: InstanceRegistry | null = null;
+const runningTasks = new Set<string>();
+
+function resolveConcurrency(): number {
+  const raw = process.env.OPENCLAW_TASK_CONCURRENCY;
+  if (!raw) return DEFAULT_TASK_CONCURRENCY;
+  const parsed = parseInt(raw, 10);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > MAX_TASK_CONCURRENCY) {
+    log(
+      `Invalid OPENCLAW_TASK_CONCURRENCY="${raw}" (must be 1-${MAX_TASK_CONCURRENCY}), using ${DEFAULT_TASK_CONCURRENCY}`
+    );
+    return DEFAULT_TASK_CONCURRENCY;
+  }
+  return parsed;
+}
 
 async function processTask(task: Task, registry: InstanceRegistry): Promise<void> {
   taskManager.updateStatus(task.id, 'running');
@@ -116,28 +46,54 @@ async function processTask(task: Task, registry: InstanceRegistry): Promise<void
     return;
   }
 
+  const controller = new AbortController();
+  taskManager.attachAbortController(task.id, controller);
+
   try {
     const input = task.input as { message: string; session_id?: string };
-    const response = await client.chat(input.message, input.session_id);
+    // Stream so we see live progress: each delta proves the gateway is still
+    // working, and the client's idle timeout replaces the absolute timeout.
+    const response = await client.chat(input.message, {
+      sessionId: input.session_id,
+      signal: controller.signal,
+      onDelta: (_delta, accumulated) => {
+        taskManager.updateProgress(task.id, accumulated.length);
+      },
+    });
+    // A cancel can land between the gateway resolving and this line; the
+    // cancelled status must win, otherwise the caller is told the task was
+    // cancelled and then sees it complete. `task` is the manager's own live
+    // record, so this sees the cancel without needing an owner-scoped read.
+    if (task.status === 'cancelled') {
+      return;
+    }
     taskManager.updateStatus(task.id, 'completed', response.response);
   } catch (error) {
+    // A cancel aborts the request; don't overwrite the cancelled status.
+    if (task.status === 'cancelled') {
+      return;
+    }
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
     taskManager.updateStatus(task.id, 'failed', undefined, errorMsg);
   }
 }
 
 async function taskProcessor(): Promise<void> {
-  if (!processorRegistry) return;
+  const concurrency = resolveConcurrency();
+  log(`Task processor concurrency: ${concurrency}`);
 
   while (processorRunning) {
-    const task = taskManager.getNextPending();
+    while (runningTasks.size < concurrency && processorRegistry) {
+      const task = taskManager.getNextPending();
+      if (!task) break;
 
-    if (task) {
-      await processTask(task, processorRegistry);
-    } else {
-      // No pending tasks, wait a bit
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      runningTasks.add(task.id);
+      void processTask(task, processorRegistry)
+        .catch(() => {})
+        .finally(() => runningTasks.delete(task.id));
     }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
 
@@ -246,7 +202,7 @@ export async function handleOpenclawTaskStatus(
   }
   const task_id = tidResult.value;
 
-  // Tasks owned by another connection read as "not found" — same message as a
+  // Tasks owned by someone else read as "not found" — same message as a
   // genuinely unknown ID, so this cannot be used to probe for their existence.
   const task = taskManager.get(task_id, ownerId);
   if (!task) {
@@ -263,6 +219,10 @@ export async function handleOpenclawTaskStatus(
 
   if (task.startedAt) {
     response.started_at = task.startedAt.toISOString();
+  }
+  if (task.status === 'running' && task.progressChars !== undefined) {
+    response.progress_chars = task.progressChars;
+    response.last_activity_at = task.lastActivityAt?.toISOString();
   }
   if (task.completedAt) {
     response.completed_at = task.completedAt.toISOString();
@@ -367,16 +327,16 @@ export async function handleOpenclawTaskCancel(
   }
   const task_id = tidResult.value;
 
-  // Same as task_status: another connection's task is indistinguishable from
+  // Same as task_status: another owner's task is indistinguishable from
   // an unknown one.
   const task = taskManager.get(task_id, ownerId);
   if (!task) {
     return errorResponse(`Task not found: ${task_id}`);
   }
 
-  if (task.status !== 'pending') {
+  if (task.status !== 'pending' && task.status !== 'running') {
     return errorResponse(
-      `Cannot cancel task with status: ${task.status}. Only pending tasks can be cancelled.`
+      `Cannot cancel task with status: ${task.status}. Only pending or running tasks can be cancelled.`
     );
   }
 

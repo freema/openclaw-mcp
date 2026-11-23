@@ -323,4 +323,168 @@ describe('OpenClawClient', () => {
       await expect(client.chat('test')).rejects.toThrow(/10MB/);
     });
   });
+
+  describe('chat (streaming)', () => {
+    function sseStream(chunks: string[]): ReadableStream<Uint8Array> {
+      const encoder = new TextEncoder();
+      return new ReadableStream({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(encoder.encode(chunk));
+          }
+          controller.close();
+        },
+      });
+    }
+
+    function mockStreamResponse(chunks: string[]) {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        headers: { get: () => null },
+        body: sseStream(chunks),
+      });
+    }
+
+    it('sets stream:true and accumulates deltas via onDelta', async () => {
+      mockStreamResponse([
+        'data: {"model":"openclaw","choices":[{"delta":{"content":"Hel"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n',
+        'data: {"choices":[{"delta":{}}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}\n\n',
+        'data: [DONE]\n\n',
+      ]);
+
+      const deltas: string[] = [];
+      const result = await client.chat('hi', {
+        onDelta: (delta) => deltas.push(delta),
+      });
+
+      const requestBody = JSON.parse(fetchSpy.mock.calls[0][1].body as string);
+      expect(requestBody.stream).toBe(true);
+      expect(deltas).toEqual(['Hel', 'lo']);
+      expect(result.response).toBe('Hello');
+      expect(result.model).toBe('openclaw');
+      expect(result.usage?.total_tokens).toBe(3);
+    });
+
+    it('handles SSE lines split across reads', async () => {
+      mockStreamResponse([
+        'data: {"choices":[{"delta":{"con',
+        'tent":"AB"}}]}\ndata: {"choices":[{"delta":{"content":"C"}}]}\n',
+        'data: [DONE]\n',
+      ]);
+
+      const result = await client.chat('hi', { onDelta: () => {} });
+      expect(result.response).toBe('ABC');
+    });
+
+    it('skips unparseable SSE lines without failing', async () => {
+      mockStreamResponse([
+        'data: not-json\n',
+        ': keepalive comment\n',
+        'data: {"choices":[{"delta":{"content":"ok"}}]}\n',
+        'data: [DONE]\n',
+      ]);
+
+      const result = await client.chat('hi', { onDelta: () => {} });
+      expect(result.response).toBe('ok');
+    });
+
+    it('throws OpenClawApiError on non-2xx streaming response', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: false,
+        status: 502,
+        statusText: 'Bad Gateway',
+        headers: { get: () => null },
+        body: null,
+      });
+
+      await expect(client.chat('hi', { onDelta: () => {} })).rejects.toThrow(OpenClawApiError);
+    });
+
+    it('completes when the stream ends without [DONE]', async () => {
+      mockStreamResponse(['data: {"choices":[{"delta":{"content":"partial"}}]}\n']);
+
+      const result = await client.chat('hi', { onDelta: () => {} });
+      expect(result.response).toBe('partial');
+    });
+
+    it('does not drop a final event that arrives without a trailing newline', async () => {
+      mockStreamResponse([
+        'data: {"choices":[{"delta":{"content":"Hello "}}]}\n',
+        'data: {"choices":[{"delta":{"content":"world"}}]}',
+      ]);
+
+      const result = await client.chat('hi', { onDelta: () => {} });
+      expect(result.response).toBe('Hello world');
+    });
+
+    it('captures the trailing usage chunk that follows finish_reason', async () => {
+      mockStreamResponse([
+        'data: {"choices":[{"delta":{"content":"hi"}}]}\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n',
+        'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}\n',
+        'data: [DONE]\n',
+      ]);
+
+      const result = await client.chat('hi', { onDelta: () => {} });
+      expect(result.response).toBe('hi');
+      expect(result.usage?.total_tokens).toBe(4);
+    });
+
+    it('stops at a terminal finish_reason without waiting for [DONE]', async () => {
+      // A buffering proxy may hold the socket open after the answer is done;
+      // finish_reason is the signal that nothing more is coming.
+      mockStreamResponse([
+        'data: {"choices":[{"delta":{"content":"done"},"finish_reason":"stop"}]}\n',
+      ]);
+
+      const result = await client.chat('hi', { onDelta: () => {} });
+      expect(result.response).toBe('done');
+    });
+
+    it('splits on lone CR terminators', async () => {
+      mockStreamResponse(['data: {"choices":[{"delta":{"content":"AB"}}]}\rdata: [DONE]\r']);
+
+      const result = await client.chat('hi', { onDelta: () => {} });
+      expect(result.response).toBe('AB');
+    });
+
+    it('requests an SSE response', async () => {
+      mockStreamResponse(['data: {"choices":[{"delta":{"content":"x"}}]}\ndata: [DONE]\n']);
+
+      await client.chat('hi', { onDelta: () => {} });
+      const headers = fetchSpy.mock.calls[0][1].headers as Record<string, string>;
+      expect(headers['Accept']).toBe('text/event-stream');
+    });
+
+    it('raises an error when the gateway reports a failure mid-stream', async () => {
+      mockStreamResponse(['data: {"error":{"message":"upstream exploded"}}\n']);
+
+      await expect(client.chat('hi', { onDelta: () => {} })).rejects.toThrow(/upstream exploded/);
+    });
+
+    it('raises an error instead of returning an empty success for a non-SSE body', async () => {
+      // Gateway ignored stream:true and answered with plain JSON.
+      mockStreamResponse(['{"choices":[{"message":{"content":"the real answer"}}]}']);
+
+      await expect(client.chat('hi', { onDelta: () => {} })).rejects.toThrow(/no streamed content/);
+    });
+
+    it('reports a caller-initiated cancel as a cancellation, not a timeout', async () => {
+      const controller = new AbortController();
+      fetchSpy.mockImplementation((_url: string, init: RequestInit) => {
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          );
+        });
+      });
+
+      const promise = client.chat('hi', { onDelta: () => {}, signal: controller.signal });
+      controller.abort();
+      await expect(promise).rejects.toThrow(/cancelled/i);
+    });
+  });
 });

@@ -8,6 +8,7 @@ import http from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
 
 import { InstanceRegistry } from '../../openclaw/registry.js';
+import { OAUTH_MAX_BODY_BYTES } from '../../auth/router.js';
 import { createHttpApp, httpErrorHandler, MAX_REQUEST_BODY_BYTES } from '../../server/http.js';
 
 vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -18,7 +19,7 @@ const REDIRECT_URI = 'http://localhost/callback';
 
 let server: http.Server;
 let baseUrl: string;
-let closeSessions: () => Promise<void>;
+let closeApp: () => Promise<void>;
 let chat: ReturnType<typeof vi.fn>;
 
 beforeAll(async () => {
@@ -39,7 +40,7 @@ beforeAll(async () => {
     },
     { registry, serverName: 'test', serverVersion: '0.0.0' }
   );
-  closeSessions = httpApp.closeSessions;
+  closeApp = httpApp.close;
 
   await new Promise<void>((resolve) => {
     server = httpApp.app.listen(0, '127.0.0.1', () => {
@@ -50,7 +51,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await closeSessions();
+  await closeApp();
   server.closeAllConnections();
   await new Promise<void>((resolve, reject) => {
     server.close((err) => (err ? reject(err) : resolve()));
@@ -109,32 +110,21 @@ async function readReply(res: Response): Promise<any> {
   return JSON.parse(text);
 }
 
-/** Open an MCP session and return a function that posts raw bodies to it. */
-async function openSession(token: string) {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    Accept: 'application/json, text/event-stream',
-    Authorization: `Bearer ${token}`,
-  };
-  const init = await fetch(`${baseUrl}/mcp`, {
+/**
+ * Post a raw body to /mcp as a 2025-era client. The endpoint is stateless, so
+ * there is no session to open first: every request stands on its own.
+ */
+function post(token: string, body: string): Promise<Response> {
+  return fetch(`${baseUrl}/mcp`, {
     method: 'POST',
-    headers,
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      id: 0,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2025-06-18',
-        capabilities: {},
-        clientInfo: { name: 'test', version: '0' },
-      },
-    }),
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, text/event-stream',
+      Authorization: `Bearer ${token}`,
+      'Mcp-Protocol-Version': '2025-06-18',
+    },
+    body,
   });
-  expect(init.status).toBe(200);
-  await init.text();
-  headers['Mcp-Session-Id'] = init.headers.get('mcp-session-id')!;
-  headers['Mcp-Protocol-Version'] = '2025-06-18';
-  return (body: string) => fetch(`${baseUrl}/mcp`, { method: 'POST', headers, body });
 }
 
 function chatCall(message: string): string {
@@ -147,20 +137,18 @@ function chatCall(message: string): string {
 }
 
 describe('request body limit', () => {
-  it('accepts a maximum-length multi-byte message (was 413 under the 100 kB default)', async () => {
-    const post = await openSession(await getAccessToken());
+  it('accepts a maximum-length multi-byte message (would be 413 under a 100 kB default)', async () => {
     const body = chatCall('漢'.repeat(100_000));
     expect(new TextEncoder().encode(body).length).toBeGreaterThan(300_000);
 
-    const res = await post(body);
+    const res = await post(await getAccessToken(), body);
     expect(res.status).toBe(200);
     const reply = await readReply(res);
     expect(reply.result.content[0].text).toBe('received 100000 chars');
   });
 
   it('rejects a body over the limit with a JSON-RPC 413 and no stack trace', async () => {
-    const post = await openSession(await getAccessToken());
-    const res = await post(chatCall('a'.repeat(MAX_REQUEST_BODY_BYTES)));
+    const res = await post(await getAccessToken(), chatCall('a'.repeat(MAX_REQUEST_BODY_BYTES)));
     expect(res.status).toBe(413);
     expect(res.headers.get('content-type')).toContain('application/json');
     const text = await res.text();
@@ -175,22 +163,25 @@ describe('request body limit', () => {
     expect(text).not.toMatch(/node_modules|\.js:\d+|\bat\s/);
   });
 
-  it('applies the same limit to legacy POST /messages', async () => {
-    const res = await fetch(`${baseUrl}/messages?sessionId=unknown`, {
+  it('refuses a non-JSON Content-Type instead of handling the body unparsed', async () => {
+    const callsBefore = chat.mock.calls.length;
+    const res = await fetch(`${baseUrl}/mcp`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'text/plain',
+        Accept: 'application/json, text/event-stream',
         Authorization: `Bearer ${await getAccessToken()}`,
       },
-      body: chatCall('a'.repeat(MAX_REQUEST_BODY_BYTES)),
+      body: chatCall('hi'),
     });
-    expect(res.status).toBe(413);
-    expect(((await res.json()) as any).error.code).toBe(-32000);
+    const text = await res.text();
+    expect(res.status).toBe(415);
+    expect(text).not.toMatch(/node_modules|\.js:\d+|\bat\s/);
+    expect(chat.mock.calls.length).toBe(callsBefore);
   });
 
   it('answers malformed JSON with a JSON-RPC parse error, not an HTML page', async () => {
-    const post = await openSession(await getAccessToken());
-    const res = await post('{not json');
+    const res = await post(await getAccessToken(), '{not json');
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
       jsonrpc: '2.0',
@@ -200,10 +191,10 @@ describe('request body limit', () => {
   });
 });
 
-describe('authentication runs before body parsing on the MCP endpoints', () => {
+describe('authentication runs before body parsing on the MCP endpoint', () => {
   it('answers 401 without reading an oversized or malformed body', async () => {
     const callsBefore = chat.mock.calls.length;
-    for (const path of ['/mcp', '/messages', '/mcp/', '/MCP']) {
+    for (const path of ['/mcp', '/mcp/', '/MCP']) {
       for (const body of [chatCall('a'.repeat(200_000)), '{not json']) {
         const res = await fetch(`${baseUrl}${path}`, {
           method: 'POST',
@@ -216,10 +207,44 @@ describe('authentication runs before body parsing on the MCP endpoints', () => {
     }
     expect(chat.mock.calls.length).toBe(callsBefore);
   });
+
+  it('rejects a token that was never issued', async () => {
+    const res = await post(randomUUID(), chatCall('hi'));
+    expect(res.status).toBe(401);
+  });
 });
 
-describe('OAuth endpoints keep their previous body handling', () => {
-  it('still accepts a JSON-encoded token request', async () => {
+describe('removed legacy SSE transport', () => {
+  it('answers 410 on GET /sse and POST /messages without parsing a body', async () => {
+    const sse = await fetch(`${baseUrl}/sse`);
+    expect(sse.status).toBe(410);
+    await sse.text();
+
+    const messages = await fetch(`${baseUrl}/messages?sessionId=unknown`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{not json',
+    });
+    expect(messages.status).toBe(410);
+    expect(((await messages.json()) as { error: string }).error).toContain('/mcp');
+  });
+});
+
+describe('CORS', () => {
+  it('sends no CORS headers unless CORS_ORIGINS opts in', async () => {
+    const res = await fetch(`${baseUrl}/health`, { headers: { Origin: 'http://127.0.0.1:9' } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('access-control-allow-origin')).toBeNull();
+  });
+
+  it('rejects a cross-site Origin on a loopback bind (DNS-rebinding protection)', async () => {
+    const res = await fetch(`${baseUrl}/health`, { headers: { Origin: 'https://evil.example' } });
+    expect(res.status).toBe(403);
+  });
+});
+
+describe('OAuth endpoint body handling', () => {
+  it('accepts a JSON-encoded token request, as 1.x did', async () => {
     const { code, codeVerifier } = await authorize();
     const res = await fetch(`${baseUrl}/token`, {
       method: 'POST',
@@ -230,7 +255,18 @@ describe('OAuth endpoints keep their previous body handling', () => {
     expect(((await res.json()) as any).access_token).toBeTruthy();
   });
 
-  it('keeps the 100 kB default there and reports errors in OAuth shape', async () => {
+  it('still authenticates the client on a JSON-encoded token request', async () => {
+    const { code, codeVerifier } = await authorize();
+    const res = await fetch(`${baseUrl}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...tokenRequest(code, codeVerifier), client_secret: 'wrong' }),
+    });
+    expect(res.status).toBe(401);
+    expect(((await res.json()) as any).error).toBe('invalid_client');
+  });
+
+  it('limits OAuth bodies to 100 kB and reports errors in OAuth shape', async () => {
     const tooLarge = await fetch(`${baseUrl}/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -239,8 +275,16 @@ describe('OAuth endpoints keep their previous body handling', () => {
     expect(tooLarge.status).toBe(413);
     expect(await tooLarge.json()).toEqual({
       error: 'invalid_request',
-      error_description: 'Payload Too Large: request body must not exceed 102400 bytes',
+      error_description: `Payload Too Large: request body must not exceed ${OAUTH_MAX_BODY_BYTES} bytes`,
     });
+
+    const tooLargeForm = await fetch(`${baseUrl}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ grant_type: 'authorization_code', code: 'a'.repeat(200_000) }),
+    });
+    expect(tooLargeForm.status).toBe(413);
+    expect(((await tooLargeForm.json()) as any).error).toBe('invalid_request');
 
     const malformed = await fetch(`${baseUrl}/register`, {
       method: 'POST',
@@ -304,7 +348,7 @@ describe('httpErrorHandler', () => {
     const res = { headersSent: true, status: vi.fn(), json: vi.fn() };
     const next = vi.fn();
     const err = new Error('late');
-    httpErrorHandler(err, { method: 'GET', path: '/sse' } as never, res as never, next);
+    httpErrorHandler(err, { method: 'GET', path: '/mcp' } as never, res as never, next);
     expect(next).toHaveBeenCalledWith(err);
     expect(res.status).not.toHaveBeenCalled();
   });

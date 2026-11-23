@@ -196,11 +196,33 @@ describe('TaskManager', () => {
       expect(taskManager.get(task.id, OWNER)?.completedAt).toBeInstanceOf(Date);
     });
 
-    it('rejects cancellation of non-pending task', () => {
+    it('cancels a running task and aborts its request', () => {
       const task = taskManager.create({ type: 'chat', input: 'test', ownerId: OWNER });
       taskManager.updateStatus(task.id, 'running');
-      expect(taskManager.cancel(task.id, OWNER)).toBe(false);
+      const controller = new AbortController();
+      taskManager.attachAbortController(task.id, controller);
+
+      expect(taskManager.cancel(task.id, OWNER)).toBe(true);
+      expect(taskManager.get(task.id, OWNER)?.status).toBe('cancelled');
+      expect(controller.signal.aborted).toBe(true);
+    });
+
+    it("refuses to cancel another owner's running task, leaving it unaborted", () => {
+      const task = taskManager.create({ type: 'chat', input: 'test', ownerId: OWNER });
+      taskManager.updateStatus(task.id, 'running');
+      const controller = new AbortController();
+      taskManager.attachAbortController(task.id, controller);
+
+      expect(taskManager.cancel(task.id, OTHER)).toBe(false);
       expect(taskManager.get(task.id, OWNER)?.status).toBe('running');
+      expect(controller.signal.aborted).toBe(false);
+    });
+
+    it('rejects cancellation of a finished task', () => {
+      const task = taskManager.create({ type: 'chat', input: 'test', ownerId: OWNER });
+      taskManager.updateStatus(task.id, 'completed', 'done');
+      expect(taskManager.cancel(task.id, OWNER)).toBe(false);
+      expect(taskManager.get(task.id, OWNER)?.status).toBe('completed');
     });
 
     it('returns false for unknown task', () => {

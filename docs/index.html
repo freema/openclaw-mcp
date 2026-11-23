@@ -540,7 +540,7 @@ pre, code { font-family: 'JetBrains Mono', monospace; }
       </div>
       <div class="feature-card">
         <h3 class="font-syne">Two Transports</h3>
-        <p>Supports both Stdio (for Desktop) and SSE (for remote hosting) transport layers out of the box.</p>
+        <p>Supports both stdio (for Desktop) and Streamable HTTP (for remote hosting) transports out of the box.</p>
       </div>
       <div class="feature-card">
         <h3 class="font-syne">Input Validation</h3>
@@ -588,7 +588,7 @@ pre, code { font-family: 'JetBrains Mono', monospace; }
               <tr><td>openclaw_chat_async</td><td>Queued chat execution</td></tr>
               <tr><td>openclaw_task_status</td><td>Check specific task progress</td></tr>
               <tr><td>openclaw_task_list</td><td>List all running tasks</td></tr>
-              <tr><td>openclaw_task_cancel</td><td>Kill a pending task</td></tr>
+              <tr><td>openclaw_task_cancel</td><td>Cancel a pending or running task</td></tr>
             </tbody>
           </table>
         </div>
@@ -650,7 +650,7 @@ MCP_CLIENT_SECRET=$MCP_CLIENT_SECRET \
 MCP_ISSUER_URL=https://mcp.your-domain.com \
 CORS_ORIGINS=https://claude.ai \
 OPENCLAW_GATEWAY_TOKEN=your-token \
-npx openclaw-mcp --transport sse --port 3000</code></pre>
+npx openclaw-mcp --transport http --port 3000</code></pre>
           </div>
         </div>
       </div>

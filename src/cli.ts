@@ -34,6 +34,11 @@ export function parseEnvBoolean(value: string | undefined): boolean | undefined 
 
 export function parseArguments(version: string): CliArgs {
   const argv = yargs(hideBin(process.argv))
+    // A repeated flag keeps its last value instead of becoming an array. The
+    // Docker image's ENTRYPOINT already passes `--transport http`, so
+    // `docker run image --transport http` used to turn transport into
+    // ['http', 'http'], which matched no transport and fell back to stdio.
+    .parserConfiguration({ 'duplicate-arguments-array': false })
     .version(version)
     .option('openclaw-url', {
       alias: 'u',
@@ -62,7 +67,7 @@ export function parseArguments(version: string): CliArgs {
       type: 'string',
       choices: ['stdio', 'http', 'sse'] as const,
       description:
-        'Transport mode (stdio for local, http for remote; "sse" is a deprecated alias for "http")',
+        'Transport mode (stdio for local, http for remote; "sse" was removed in v2.0 and exits with an error)',
       default: 'stdio',
     })
     .option('port', {

@@ -25,7 +25,7 @@ The MCP server is a thin proxy — it translates MCP tool calls into OpenAI-comp
 | `openclaw_chat_async` | Queue a message for async processing, receive a task ID | Creates an in-memory task; same as `openclaw_chat` once it runs |
 | `openclaw_task_status` | Check the status of an async task by ID | None — read-only |
 | `openclaw_task_list` | List all async tasks and their statuses | None — read-only |
-| `openclaw_task_cancel` | Cancel a pending async task by ID | Removes an in-memory task |
+| `openclaw_task_cancel` | Cancel a pending or running async task by ID | Marks an in-memory task cancelled and aborts its in-flight gateway request |
 
 **Key point:** All tools either read data or send text messages to OpenClaw. The MCP server itself has **no write access** to any filesystem, database, or external service beyond the OpenClaw gateway. What a message causes is decided by the OpenClaw agent that receives it.
 
@@ -36,7 +36,7 @@ The MCP server is a thin proxy — it translates MCP tool calls into OpenAI-comp
 - **Access the network** — the server only talks to the configured OpenClaw gateway URL(s)
 - **Modify server configuration** — environment variables are set at startup, not changeable at runtime
 - **Bypass authentication** — OAuth tokens are validated per-request when auth is enabled
-- **Access other clients' async tasks** — tasks are scoped to the authenticated OAuth client (to the connection when there is none)
+- **Access other clients' async tasks** — tasks are scoped to the authenticated OAuth client. Without one (stdio, or HTTP with `MCP_DANGEROUSLY_DISABLE_AUTH`) the whole process is a single owner
 
 ## Trust Boundaries
 
@@ -92,7 +92,7 @@ The MCP server is a thin proxy — it translates MCP tool calls into OpenAI-comp
 - OAuth 2.1 (authorization code + PKCE) with a pre-configured client — mandatory, the server refuses to start without it
 - HTTPS via reverse proxy (Caddy or nginx); the provided `docker-compose.yml` publishes the port on `127.0.0.1` only
 - CORS is off by default; when enabled it is restricted to the configured origins
-- DNS rebinding protection (Host header validation) on loopback binds and whenever `ALLOWED_HOSTS` is set
+- DNS rebinding protection (Host and Origin header validation) on loopback binds and whenever `ALLOWED_HOSTS` is set
 
 ### 5. Server-Side Request Forgery (SSRF)
 
@@ -107,13 +107,13 @@ The MCP server is a thin proxy — it translates MCP tool calls into OpenAI-comp
 **Risk:** Resource exhaustion through excessive requests or large payloads.
 
 **Mitigations:**
-- Request body limit: 4 MiB on the MCP endpoints, read only after authentication; JSON-RPC batches capped at 100 messages
+- Request body limit: 4 MiB on the MCP endpoint, read only after authentication; 100 kB on the OAuth endpoints; JSON-RPC batches capped at 100 messages
 - Message length limit: 100,000 characters per tool call
 - Request timeout per gateway call: `OPENCLAW_TIMEOUT_MS` (default 2 minutes)
 - Response size limit: 10 MB
-- The MCP SDK rate-limits the OAuth endpoints; add rate limiting for `/mcp` at the reverse proxy
+- The OAuth endpoints are rate-limited per client IP; add rate limiting for `/mcp` at the reverse proxy
 - Docker memory limit: 256 MB (configurable)
-- Async task queue is in-memory with bounded processing
+- Async task queue is in-memory, capped at 1,000 tasks, with bounded concurrency (`OPENCLAW_TASK_CONCURRENCY`)
 
 ## Production Recommendations
 

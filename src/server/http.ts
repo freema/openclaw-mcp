@@ -1,48 +1,58 @@
 /**
- * HTTP Transport for remote MCP access
+ * HTTP Transport for remote MCP access (SDK v2).
  *
- * Provides a full Express HTTP server with:
- * - Modern Streamable HTTP transport (POST/GET/DELETE /mcp) — primary
- * - Legacy SSE transport (GET /sse + POST /messages) — deprecated, kept for backward compat
- * - OAuth 2.1 authentication via MCP SDK (mcpAuthRouter + requireBearerAuth)
+ * Provides an Express HTTP server with:
+ * - Stateless Streamable HTTP MCP endpoint (ALL /mcp) via createMcpHandler.
+ *   2026-07-28-era clients are served per-request; 2025-era clients fall back
+ *   to the SDK's stateless legacy mode. No MCP sessions; OAuth tokens and
+ *   async tasks still live in process memory, so run a single instance.
+ * - OAuth 2.1 authorization server (src/auth/router.ts) + bearer-gated /mcp
  * - .well-known discovery endpoints for OAuth metadata
- * - CORS support
+ * - CORS support (opt-in)
  * - Explicit request body limit, enforced after authentication
+ * - JSON error responses (never Express' HTML/stack-trace page)
  * - Health check endpoint
  * - Graceful shutdown
+ *
+ * The legacy HTTP+SSE transport (GET /sse + POST /messages) was removed in
+ * v2.0 — those endpoints now answer 410 Gone with a migration hint.
  */
 
-import { randomUUID } from 'node:crypto';
 import { STATUS_CODES } from 'node:http';
-import type { IncomingMessage, ServerResponse, Server as HttpServer } from 'node:http';
+import type { Server as HttpServer } from 'node:http';
 import express from 'express';
 import type { Express, Request, Response, NextFunction } from 'express';
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { hostHeaderValidation } from '@modelcontextprotocol/sdk/server/middleware/hostHeaderValidation.js';
-import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
-import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+import { createMcpHandler } from '@modelcontextprotocol/server';
+import { toNodeHandler } from '@modelcontextprotocol/node';
+import {
+  requireBearerAuth,
+  hostHeaderValidation,
+  originValidation,
+  getOAuthProtectedResourceMetadataUrl,
+} from '@modelcontextprotocol/express';
 
 import { OpenClawAuthProvider, type AuthProviderConfig } from '../auth/provider.js';
+import { createAuthRouter } from '../auth/router.js';
 import { log, logError } from '../utils/logger.js';
 import { isLoopbackHost } from './http-auth.js';
-import { createMcpServer, type ToolRegistrationDeps } from './tools-registration.js';
+import { createMcpServer, type ToolRegistrationDeps } from './mcp-server.js';
 
 /**
- * Upper bound on an MCP request body (POST /mcp and POST /messages).
+ * Upper bound on an MCP request body (POST /mcp).
  *
  * `openclaw_chat` accepts messages of up to 100,000 characters — up to ~300 kB
- * of UTF-8, more once JSON-escaped. Express' implicit 100 kB default (what the
- * SDK's `createMcpExpressApp()` applies) rejected such messages with 413, so
- * the limit is explicit. 4 MiB is the cap the MCP SDK uses whenever it reads a
- * request body itself.
+ * of UTF-8, more once JSON-escaped — so Express' implicit 100 kB default would
+ * reject valid calls with 413. 4 MiB is also the cap the MCP SDK's Node adapter
+ * applies when it reads a request body itself.
  */
 export const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 
-/** Routes whose JSON body is parsed after authentication, with the limit above. */
-const MCP_BODY_PATHS = new Set(['/mcp', '/messages']);
+/** Route whose JSON body is parsed after authentication, with the limit above. */
+const MCP_PATH = '/mcp';
+
+/** How long in-flight requests may finish on their own during shutdown. */
+const DRAIN_GRACE_MS = 3_000;
 
 export interface HttpServerConfig {
   port: number;
@@ -51,8 +61,8 @@ export interface HttpServerConfig {
   issuerUrl?: string;
   /**
    * Express `trust proxy` setting. Required when behind a reverse proxy that
-   * sets `X-Forwarded-For` — otherwise `express-rate-limit` (used by the MCP
-   * SDK auth handlers) throws `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` on `/token`.
+   * sets `X-Forwarded-For` — otherwise `express-rate-limit` (used on the OAuth
+   * endpoints) throws `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` on `/token`.
    * Accepts `true` / `false`, a hop count (e.g. `1`), or an IP/CIDR string or
    * keyword (`loopback`, `linklocal`, `uniquelocal`). Undefined leaves the
    * Express default (`false`) untouched.
@@ -91,7 +101,7 @@ export function parseTrustProxy(value: string | undefined): boolean | number | s
   return trimmed;
 }
 
-/** Hostnames always accepted when Host validation is active. */
+/** Hostnames always accepted when Host/Origin validation is active. */
 const LOOPBACK_HOSTNAMES = ['localhost', '127.0.0.1', '[::1]'];
 
 /**
@@ -108,7 +118,7 @@ export function parseAllowedHosts(value: string | undefined): string[] | undefin
 }
 
 /**
- * Decide whether Host validation applies and with which hostname list.
+ * Decide whether Host/Origin validation applies and with which hostname list.
  * Validation is on for loopback binds (DNS-rebinding protection) and whenever
  * an explicit allowlist is configured; `null` means validation is disabled.
  */
@@ -172,18 +182,6 @@ export function isOriginAllowed(origin: string | undefined, allowedOrigins: stri
   });
 }
 
-// --- Session tracking ---
-
-interface LegacySseSession {
-  transport: SSEServerTransport;
-  server: Server;
-}
-
-interface StreamableSession {
-  transport: StreamableHTTPServerTransport;
-  server: Server;
-}
-
 // --- Error responses ---
 
 /**
@@ -191,7 +189,7 @@ interface StreamableSession {
  * JSON) and anything else that reaches Express would otherwise be answered by
  * Express' default handler: an HTML page that includes the stack trace, with
  * internal paths, unless NODE_ENV=production. Reply with a terse JSON error
- * instead — JSON-RPC shaped on the MCP endpoints, OAuth shaped elsewhere.
+ * instead — JSON-RPC shaped on the MCP endpoint, OAuth shaped elsewhere.
  */
 export function httpErrorHandler(
   err: unknown,
@@ -227,7 +225,7 @@ export function httpErrorHandler(
     logError(`Unhandled error on ${req.method} ${req.path}`, err);
   }
 
-  if (MCP_BODY_PATHS.has(normalizePath(req.path))) {
+  if (normalizePath(req.path) === MCP_PATH) {
     res.status(status).json({ jsonrpc: '2.0', error: { code, message }, id: null });
     return;
   }
@@ -248,33 +246,33 @@ export interface HttpApp {
   app: Express;
   authEnabled: boolean;
   corsConfig: { origins: string[]; enabled: boolean };
-  /** Close every open MCP session (used on shutdown). */
-  closeSessions: () => Promise<void>;
+  /** Abort in-flight MCP exchanges (used on shutdown). */
+  close: () => Promise<void>;
 }
 
 /**
- * Build the Express app with Streamable HTTP + legacy SSE transports, without
+ * Build the Express app with the stateless Streamable HTTP transport, without
  * listening. Split from `createHttpServer` so tests can drive the real app.
  */
 export function createHttpApp(config: HttpServerConfig, deps: ToolRegistrationDeps): HttpApp {
   const authEnabled = !!config.authConfig?.clientId;
   const corsConfig = loadCorsConfig();
 
-  // Active sessions
-  const legacySseSessions = new Map<string, LegacySseSession>();
-  const streamableSessions = new Map<string, StreamableSession>();
-
-  // The app is assembled here rather than with the SDK's createMcpExpressApp(),
-  // which installs a global express.json() with the implicit 100 kB limit in
-  // front of authentication. Host validation is the same SDK middleware.
-  //
-  // DNS-rebinding protection: on for loopback binds. ALLOWED_HOSTS extends the
-  // accepted set for reverse proxies that preserve the public Host header
-  // (#41), and also turns validation on for non-loopback binds.
   const app: Express = express();
+  // Express 5 exposes query params via the extended parser by default; the
+  // simple parser keeps values as plain strings, matching our validation.
+  app.set('query parser', 'simple');
+
+  // DNS-rebinding protection for loopback binds. A browser can resolve an
+  // attacker-controlled name to 127.0.0.1, so a local server must check that
+  // Host and Origin really are local. SDK v1's createMcpExpressApp did this;
+  // on v2 it has to be wired explicitly. ALLOWED_HOSTS extends the accepted
+  // set for reverse proxies that preserve the public Host header (#41), and
+  // also turns validation on for non-loopback binds.
   const allowedHostnames = resolveAllowedHostnames(config.host, config.allowedHosts);
   if (allowedHostnames) {
     app.use(hostHeaderValidation(allowedHostnames));
+    app.use(originValidation(allowedHostnames));
     log(`DNS-rebinding protection: enabled (allowed hosts: ${allowedHostnames.join(', ')})`);
   } else {
     log(
@@ -283,12 +281,27 @@ export function createHttpApp(config: HttpServerConfig, deps: ToolRegistrationDe
     );
   }
 
-  // Configure Express `trust proxy` when running behind a reverse proxy.
-  // Without this, `express-rate-limit` (used by the MCP SDK auth handlers)
-  // crashes /token with ERR_ERL_UNEXPECTED_X_FORWARDED_FOR.
   if (config.trustProxy !== undefined) {
+    // `trust proxy: true` makes Express take req.ip from the leftmost
+    // X-Forwarded-For entry, which the client fully controls — rate limiting
+    // then keys on an attacker-chosen value and stops limiting anything.
+    if (config.trustProxy === true && authEnabled) {
+      logError(
+        'TRUST_PROXY=true is unsafe with authentication enabled: the client-controlled ' +
+          'X-Forwarded-For entry becomes the rate-limit key, disabling rate limiting on ' +
+          'the OAuth endpoints. Set TRUST_PROXY to the number of proxy hops instead ' +
+          '(TRUST_PROXY=1 for a single reverse proxy). Refusing to start.'
+      );
+      process.exit(1);
+    }
     app.set('trust proxy', config.trustProxy);
     log(`Trust proxy: ${JSON.stringify(config.trustProxy)}`);
+  } else if (authEnabled) {
+    log(
+      'WARNING: TRUST_PROXY is not set. Behind a reverse proxy every request appears to ' +
+        "come from the proxy's IP, so the OAuth rate limits apply to all clients as one " +
+        'shared budget. Set TRUST_PROXY=1 when running behind a proxy.'
+    );
   }
 
   // --- CORS middleware (before auth so preflight works) ---
@@ -310,7 +323,9 @@ export function createHttpApp(config: HttpServerConfig, deps: ToolRegistrationDe
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
       res.setHeader(
         'Access-Control-Allow-Headers',
-        'Content-Type, Authorization, Mcp-Session-Id, mcp-protocol-version'
+        // Mcp-Method / Mcp-Name are required request headers in the
+        // 2026-07-28 Streamable HTTP transport; Mcp-Session-Id is 2025-era.
+        'Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version, Mcp-Method, Mcp-Name'
       );
       res.setHeader('Access-Control-Expose-Headers', 'Mcp-Session-Id');
     }
@@ -323,22 +338,6 @@ export function createHttpApp(config: HttpServerConfig, deps: ToolRegistrationDe
     next();
   });
 
-  // --- Body parsing ---
-  // The MCP endpoints get their body parsed after authentication, with the
-  // explicit limit, so an unauthenticated caller cannot make the server buffer
-  // and parse megabytes of JSON. Every other route keeps Express' default
-  // 100 kB JSON parser, exactly as before (the OAuth handlers additionally
-  // bring their own urlencoded/JSON parsers).
-  const defaultJsonParser = express.json();
-  const mcpJsonParser = express.json({ limit: MAX_REQUEST_BODY_BYTES });
-  app.use((req: Request, res: Response, next: NextFunction) => {
-    if (MCP_BODY_PATHS.has(normalizePath(req.path))) {
-      next();
-      return;
-    }
-    defaultJsonParser(req, res, next);
-  });
-
   // --- OAuth routes (if auth enabled) ---
   let authMiddleware: ((req: Request, res: Response, next: NextFunction) => void) | undefined;
 
@@ -348,29 +347,37 @@ export function createHttpApp(config: HttpServerConfig, deps: ToolRegistrationDe
       ? new URL(config.issuerUrl)
       : new URL(`http://${config.host === '0.0.0.0' ? 'localhost' : config.host}:${config.port}`);
 
-    // Install OAuth endpoints: /authorize, /token, /register, /revoke
-    // and .well-known discovery metadata
-    app.use(
-      mcpAuthRouter({
-        provider,
-        issuerUrl,
-        scopesSupported: ['mcp:tools'],
-      })
-    );
+    // Authorization-server endpoints: /authorize, /token, /revoke,
+    // /register (DCR opt-in) and .well-known AS metadata
+    app.use(createAuthRouter({ provider, issuerUrl, scopesSupported: ['mcp:tools'] }));
 
     // Protected Resource Metadata (RFC 9728)
     // Tells clients (Inspector, Claude.ai) where the OAuth server is.
     // This is read-only metadata — no security implications.
+    const protectedResourceMetadata = (resourcePath: string) => ({
+      resource: `${issuerUrl.toString().replace(/\/$/, '')}${resourcePath}`,
+      authorization_servers: [issuerUrl.toString().replace(/\/$/, '')],
+      scopes_supported: ['mcp:tools'],
+    });
     app.get('/.well-known/oauth-protected-resource/:path', (req: Request, res: Response) => {
-      res.json({
-        resource: `${issuerUrl.toString()}${req.params.path}`,
-        authorization_servers: [issuerUrl.toString().replace(/\/$/, '')],
-        scopes_supported: ['mcp:tools'],
-      });
+      res.json(protectedResourceMetadata(`/${req.params.path}`));
+    });
+    // Some clients probe the un-suffixed document.
+    app.get('/.well-known/oauth-protected-resource', (_req: Request, res: Response) => {
+      res.json(protectedResourceMetadata('/mcp'));
     });
 
-    // Bearer auth middleware for protected routes
-    authMiddleware = requireBearerAuth({ verifier: provider });
+    // Bearer auth middleware for protected routes (sets req.auth, which
+    // toNodeHandler forwards to the MCP handler as authInfo). The
+    // resource_metadata hint lets an unauthenticated client discover the
+    // authorization server straight from the 401 challenge.
+    authMiddleware = requireBearerAuth({
+      verifier: provider,
+      // Actually enforce the scope the metadata advertises; without this any
+      // non-expired token authorizes every tool call regardless of its grant.
+      requiredScopes: ['mcp:tools'],
+      resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(new URL('/mcp', issuerUrl)),
+    });
   }
 
   // --- Health check (no auth) ---
@@ -378,169 +385,69 @@ export function createHttpApp(config: HttpServerConfig, deps: ToolRegistrationDe
     res.json({
       status: 'ok',
       transport: 'streamable-http',
-      legacySseSupported: true,
+      legacySseSupported: false,
       auth: authEnabled,
     });
   });
 
-  // Middleware chain for the MCP endpoints: bearer auth first (when enabled),
-  // then the size-limited JSON body parser, then the handler.
-  const withAuth = (handler: (req: Request, res: Response) => Promise<void>) => [
-    ...(authMiddleware ? [authMiddleware] : []),
-    mcpJsonParser,
-    async (req: Request, res: Response) => handler(req, res),
-  ];
+  // --- MCP endpoint (stateless Streamable HTTP) ---
 
-  // --- Legacy SSE transport (GET /sse + POST /messages) — deprecated ---
+  // A fresh McpServer per request. With OAuth on, every tool call must resolve
+  // to an authenticated OAuth client — that is what async tasks are owned by.
+  const mcpHandler = createMcpHandler(() => createMcpServer(deps, { authRequired: authEnabled }), {
+    legacy: 'stateless',
+    onerror: (error) => logError('MCP handler error', error),
+  });
+  const nodeHandler = toNodeHandler(mcpHandler, {
+    onerror: (error) => logError('MCP transport error', error),
+    maxRequestBodySize: MAX_REQUEST_BODY_BYTES,
+  });
 
-  app.get(
-    '/sse',
-    ...withAuth(async (req: Request, res: Response) => {
-      log('Legacy SSE transport is deprecated; prefer Streamable HTTP at /mcp');
-      const transport = new SSEServerTransport('/messages', res as unknown as ServerResponse);
-      const server = createMcpServer(deps);
-
-      const sessionId = transport.sessionId;
-      legacySseSessions.set(sessionId, { transport, server });
-      log(`SSE session connected: ${sessionId}`);
-
-      transport.onclose = () => {
-        legacySseSessions.delete(sessionId);
-        log(`SSE session disconnected: ${sessionId}`);
-      };
-
-      try {
-        await server.connect(transport);
-      } catch (error) {
-        legacySseSessions.delete(sessionId);
-        logError(`Failed to connect SSE session ${sessionId}`, error);
-      }
-    })
-  );
-
-  app.post(
-    '/messages',
-    ...withAuth(async (req: Request, res: Response) => {
-      const sessionId = req.query.sessionId as string;
-      const session = legacySseSessions.get(sessionId);
-
-      if (!session) {
-        res.status(404).json({ error: 'Session not found' });
-        return;
-      }
-
-      try {
-        await session.transport.handlePostMessage(
-          req as unknown as IncomingMessage,
-          res as unknown as ServerResponse,
-          req.body
-        );
-      } catch (error) {
-        logError(`Error handling message for session ${sessionId}`, error);
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Internal server error' });
-        }
-      }
-    })
-  );
-
-  // --- Modern Streamable HTTP transport (ALL /mcp) ---
-
-  const handleStreamableRequest = async (req: Request, res: Response) => {
-    const sessionId = req.headers['mcp-session-id'] as string | undefined;
-
-    if (sessionId && streamableSessions.has(sessionId)) {
-      // Existing session
-      const session = streamableSessions.get(sessionId)!;
-      try {
-        await session.transport.handleRequest(
-          req as unknown as IncomingMessage,
-          res as unknown as ServerResponse,
-          req.body
-        );
-      } catch (error) {
-        logError(`Error in streamable session ${sessionId}`, error);
-        if (!res.headersSent) {
-          res.status(500).json({ error: 'Internal server error' });
-        }
-      }
-      return;
-    }
-
-    // New session (initialization request)
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (newSessionId) => {
-        streamableSessions.set(newSessionId, { transport, server });
-        log(`Streamable session initialized: ${newSessionId}`);
-      },
-    });
-
-    transport.onclose = () => {
-      const sid = transport.sessionId;
-      if (sid) {
-        streamableSessions.delete(sid);
-        log(`Streamable session closed: ${sid}`);
-      }
-    };
-
-    const server = createMcpServer(deps);
-
-    try {
-      await server.connect(transport);
-      await transport.handleRequest(
-        req as unknown as IncomingMessage,
-        res as unknown as ServerResponse,
-        req.body
-      );
-    } catch (error) {
-      logError('Failed to initialize streamable session', error);
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Internal server error' });
-      }
-    }
+  const mcpRoute = (req: Request, res: Response) => {
+    // Pass the parsed body through — toNodeHandler re-serializes it. A body
+    // the JSON parser skipped (wrong Content-Type) is read by the SDK's Node
+    // adapter, under the same cap.
+    void nodeHandler(req, res, req.body);
   };
 
-  app.get('/mcp', ...withAuth(handleStreamableRequest));
-  app.post('/mcp', ...withAuth(handleStreamableRequest));
-  app.delete('/mcp', ...withAuth(handleStreamableRequest));
+  // --- Body parsing ---
+  // There is deliberately no app-wide body parser. The MCP endpoint gets its
+  // body parsed after authentication, with the explicit limit, so an
+  // unauthenticated caller cannot make the server buffer and parse megabytes
+  // of JSON. The OAuth endpoints bring their own 100 kB parsers
+  // (src/auth/router.ts); no other route reads a body at all.
+  const mcpJsonParser = express.json({ limit: MAX_REQUEST_BODY_BYTES });
+
+  // Middleware chain: bearer auth first (when enabled), then the size-limited
+  // JSON body parser, then the handler.
+  app.all(MCP_PATH, ...(authMiddleware ? [authMiddleware] : []), mcpJsonParser, mcpRoute);
+
+  // --- Legacy SSE transport: removed in v2.0 ---
+  const legacyGone = (_req: Request, res: Response) => {
+    res.status(410).json({
+      error:
+        'The HTTP+SSE transport was removed in openclaw-mcp 2.0. Connect via /mcp (Streamable HTTP).',
+    });
+  };
+  app.get('/sse', legacyGone);
+  app.post('/messages', legacyGone);
 
   // --- Error handler (last) ---
+  // Body-parser rejections (malformed JSON, payload too large) never reach the
+  // MCP handler's onerror.
   app.use(httpErrorHandler);
 
-  const closeSessions = async () => {
-    // Close all legacy SSE sessions
-    for (const [id, session] of legacySseSessions) {
-      try {
-        await session.server.close();
-      } catch (error) {
-        logError(`Error closing SSE session ${id}`, error);
-      }
-    }
-    legacySseSessions.clear();
-
-    // Close all streamable sessions
-    for (const [id, session] of streamableSessions) {
-      try {
-        await session.server.close();
-      } catch (error) {
-        logError(`Error closing streamable session ${id}`, error);
-      }
-    }
-    streamableSessions.clear();
-  };
-
-  return { app, authEnabled, corsConfig, closeSessions };
+  return { app, authEnabled, corsConfig, close: () => mcpHandler.close() };
 }
 
 /**
- * Create and start the HTTP server with Streamable HTTP + legacy SSE transports.
+ * Create and start the HTTP server with the stateless Streamable HTTP transport.
  */
 export async function createHttpServer(
   config: HttpServerConfig,
   deps: ToolRegistrationDeps
 ): Promise<void> {
-  const { app, authEnabled, corsConfig, closeSessions } = createHttpApp(config, deps);
+  const { app, authEnabled, corsConfig, close } = createHttpApp(config, deps);
 
   // --- Start server ---
 
@@ -562,7 +469,7 @@ export async function createHttpServer(
       log('Endpoints:');
       log('  GET  /.well-known/oauth-authorization-server          - OAuth metadata');
       log('  GET  /.well-known/oauth-protected-resource/mcp        - Protected resource metadata');
-      log('  POST /authorize                                       - Authorization');
+      log('  GET  /authorize                                       - Authorization');
       log('  POST /token                                           - Token exchange');
     } else {
       logError(
@@ -572,28 +479,55 @@ export async function createHttpServer(
 
     log('MCP Endpoints:');
     log('  GET  /health   - Health check (no auth)');
-    log('  ALL  /mcp      - Streamable HTTP (primary)');
-    log('  GET  /sse      - Legacy SSE stream (deprecated)');
-    log('  POST /messages - Legacy SSE messages (deprecated)');
+    log('  ALL  /mcp      - Streamable HTTP (stateless)');
   });
 
   // --- Graceful shutdown ---
 
+  let shuttingDown = false;
   const shutdown = async () => {
+    // SIGTERM followed by SIGINT must not run this twice.
+    if (shuttingDown) return;
+    shuttingDown = true;
+
     log('Shutting down HTTP server...');
 
-    await closeSessions();
-
-    httpServer.close(() => {
-      log('HTTP server stopped');
-      process.exit(0);
-    });
-
-    // Force exit after 5 seconds
-    setTimeout(() => {
+    // Force exit if the drain below doesn't finish in time.
+    const forceExit = setTimeout(() => {
       logError('Forced shutdown after timeout');
       process.exit(1);
     }, 5000);
+    forceExit.unref?.();
+
+    // `close()` stops accepting new connections synchronously, but its
+    // callback only fires once every existing connection has ended — and an
+    // in-flight MCP exchange holds its connection open. So start the drain
+    // first (to close the door), then abort the transports, then await it.
+    // Awaiting the drain before aborting would deadlock until the force timer.
+    const drained = new Promise<void>((resolve) => httpServer.close(() => resolve()));
+
+    try {
+      await close();
+    } catch (error) {
+      logError('Error closing MCP handler', error);
+    }
+
+    // handler.close() only aborts modern per-request exchanges; a legacy-era
+    // request sitting on a slow gateway call keeps its connection open until
+    // its own timeout. Let those finish briefly, then cut them, so a restart
+    // doesn't hang until the force timer and report failure to the supervisor.
+    const cutConnections = setTimeout(() => {
+      log('Draining timed out; closing remaining connections');
+      httpServer.closeAllConnections?.();
+    }, DRAIN_GRACE_MS);
+    cutConnections.unref?.();
+
+    await drained;
+
+    clearTimeout(cutConnections);
+    clearTimeout(forceExit);
+    log('HTTP server stopped');
+    process.exit(0);
   };
 
   (process as NodeJS.Process).on('SIGTERM', shutdown);

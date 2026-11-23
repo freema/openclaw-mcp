@@ -12,7 +12,7 @@ OpenClaw MCP Bridge provides access to your AI assistant. **Proper security is c
 | Prompt injection into the OpenClaw agent | High | Route the bridge to a least-privilege agent (`OPENCLAW_AGENT_ID`), see below |
 | Token theft | High | HTTPS only, 1-hour access tokens, rotating refresh tokens, `MCP_REDIRECT_URIS` allow-list |
 | Man-in-the-middle | High | TLS terminated at the reverse proxy |
-| Denial of service | Medium | Request body limit (4 MiB, enforced after authentication), SDK rate limits on the OAuth endpoints, container memory limit |
+| Denial of service | Medium | Request body limit (4 MiB, enforced after authentication), rate limits on the OAuth endpoints, container memory limit |
 | Information disclosure | Medium | JSON error responses without stack traces, credentials redacted from logs |
 
 ### Security Checklist
@@ -40,9 +40,9 @@ OpenClaw MCP Bridge provides access to your AI assistant. **Proper security is c
 MCP client on the same machine, and whoever can start it already has the
 gateway token.
 
-**HTTP transport** uses the OAuth 2.1 authorization server built into the MCP
-SDK (authorization code + PKCE). It is mandatory: without credentials the
-server refuses to start.
+**HTTP transport** uses the bridge's own OAuth 2.1 authorization server
+(authorization code + PKCE; MCP SDK v2 only provides the resource-server
+half). It is mandatory: without credentials the server refuses to start.
 
 ```bash
 MCP_CLIENT_ID=openclaw
@@ -71,7 +71,11 @@ How it works, and what it does not do:
   `MCP_DANGEROUSLY_ALLOW_DCR_PUBLIC=true` is also set.
 - **No auth at all** is only possible with the explicit
   `MCP_DANGEROUSLY_DISABLE_AUTH=true`, for setups where a proxy in front
-  authenticates every request.
+  authenticates every request. Async tasks are then no longer isolated: with
+  no caller identity, everyone who reaches the port shares one task list.
+- **Async tasks belong to the OAuth client.** A client can only read, list and
+  cancel the tasks it created; another client's task ID reads as "not found",
+  exactly like an ID that never existed.
 - **Not supported:** external identity providers, token introspection and
   static API keys. If you need SSO, put an authenticating proxy in front.
 
@@ -174,5 +178,13 @@ We release security patches as soon as possible. Keep your installation updated:
 ```bash
 npm update -g openclaw-mcp
 ```
+
+| Version | Status |
+|---------|--------|
+| 2.0.x | Stable, supported |
+| 1.8.x | Previous line; security fixes until further notice |
+| 2.0.0-beta.2 | Prerelease, superseded by 2.0.0 (same code); upgrade |
+| 2.0.0-beta.1 | **Do not use.** HTTP mode runs without authentication unless `AUTH_ENABLED=true` is set and sends `Access-Control-Allow-Origin: *` by default ([GHSA-f99f-69fc-572v](https://github.com/freema/openclaw-mcp/security/advisories/GHSA-f99f-69fc-572v), [GHSA-xp77-pwm3-v4qr](https://github.com/freema/openclaw-mcp/security/advisories/GHSA-xp77-pwm3-v4qr)); async tasks have guessable IDs and no ownership checks, the flaw fixed for 1.x in 1.7.0 ([GHSA-j2fg-4r2j-424f](https://github.com/freema/openclaw-mcp/security/advisories/GHSA-j2fg-4r2j-424f), [GHSA-c4qg-mg2r-2c56](https://github.com/freema/openclaw-mcp/security/advisories/GHSA-c4qg-mg2r-2c56)) |
+| < 1.8.0 | Unsupported, upgrade |
 
 Subscribe to security advisories on GitHub.

@@ -31,6 +31,33 @@ export interface OpenAIChatCompletionResponse {
   };
 }
 
+// Streaming chunk shape (`stream: true`), delivered as SSE `data:` lines
+export interface OpenAIChatCompletionChunk {
+  id?: string;
+  object?: string;
+  created?: number;
+  model?: string;
+  choices?: Array<{
+    index?: number;
+    delta?: {
+      role?: string;
+      content?: string;
+    };
+    finish_reason?: string | null;
+  }>;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+  /** Some gateways report a mid-stream failure after a 200 response. */
+  error?: {
+    message?: string;
+    type?: string;
+    code?: string;
+  };
+}
+
 // MCP-facing types (facade over OpenAI response)
 
 export interface OpenClawChatResponse {

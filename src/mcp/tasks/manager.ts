@@ -7,10 +7,11 @@
  * Ownership
  * ---------
  * The manager is a process-wide singleton, but in HTTP mode a single process
- * serves many independent MCP connections. Every task is therefore tagged with
- * the `ownerId` of the connection that created it, and every read/write path
+ * serves many independent callers. Every task is therefore tagged with the
+ * `ownerId` of whoever created it — the authenticated OAuth client, see
+ * resolveTaskOwner() in src/server/mcp-server.ts — and every read/write path
  * reachable from a tool handler requires that same `ownerId`. A caller can
- * never observe or mutate a task belonging to another connection, even when it
+ * never observe or mutate a task belonging to another owner, even when it
  * knows (or guesses) the task ID.
  */
 
@@ -34,17 +35,23 @@ export interface Task {
   createdAt: Date;
   startedAt?: Date;
   completedAt?: Date;
-  /** Connection that owns this task. Never exposed to clients. */
+  /** Who owns this task. Never exposed to clients. */
   ownerId: string;
   sessionId?: string;
   instanceId?: string;
   priority: number;
+  /** Streamed characters received so far (running tasks). */
+  progressChars?: number;
+  /** Last streamed activity — proof the gateway is still working. */
+  lastActivityAt?: Date;
+  /** Aborts the in-flight gateway request when a running task is cancelled. */
+  abortController?: AbortController;
 }
 
 export interface TaskCreateOptions {
   type: 'chat';
   input: unknown;
-  /** Connection creating the task — required, see "Ownership" above. */
+  /** Who is creating the task — required, see "Ownership" above. */
   ownerId: string;
   sessionId?: string;
   instanceId?: string;
@@ -153,6 +160,10 @@ class TaskManager {
 
     if (status === 'running' && !task.startedAt) {
       task.startedAt = new Date();
+      // Seed progress immediately so a running task always reports liveness,
+      // even before the first content delta arrives.
+      task.progressChars = 0;
+      task.lastActivityAt = task.startedAt;
     }
 
     if (status === 'completed' || status === 'failed' || status === 'cancelled') {
@@ -162,23 +173,60 @@ class TaskManager {
     if (result !== undefined) task.result = result;
     if (error !== undefined) task.error = error;
 
+    if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+      task.abortController = undefined;
+    }
+
     log(`Task ${id} status: ${status}`);
     return true;
   }
 
   /**
-   * Cancel a pending task owned by `ownerId`.
+   * Record streaming progress for a running task. Pass no character count to
+   * record liveness only (a heartbeat with no new content).
+   *
+   * Internal only — driven by the streaming loop that already owns the task,
+   * so it takes no ownerId.
+   */
+  updateProgress(id: string, progressChars?: number): boolean {
+    const task = this.tasks.get(id);
+    if (!task || task.status !== 'running') return false;
+
+    if (progressChars !== undefined) {
+      task.progressChars = progressChars;
+    }
+    task.lastActivityAt = new Date();
+    return true;
+  }
+
+  /**
+   * Attach the abort controller of the in-flight request to a task.
+   *
+   * Internal only — called on the path that just started the request, so it
+   * takes no ownerId.
+   */
+  attachAbortController(id: string, controller: AbortController): void {
+    const task = this.tasks.get(id);
+    if (task) task.abortController = controller;
+  }
+
+  /**
+   * Cancel a pending or running task owned by `ownerId`. Running tasks have
+   * their in-flight gateway request aborted.
    */
   cancel(id: string, ownerId: string): boolean {
     const task = this.get(id, ownerId);
     if (!task) return false;
 
-    if (task.status !== 'pending') {
-      return false; // Can only cancel pending tasks
+    if (task.status !== 'pending' && task.status !== 'running') {
+      return false; // Already finished
     }
 
+    const controller = task.abortController;
     task.status = 'cancelled';
     task.completedAt = new Date();
+    task.abortController = undefined;
+    controller?.abort();
     log(`Task cancelled: ${id}`);
     return true;
   }
@@ -230,7 +278,7 @@ class TaskManager {
    * Get statistics for the tasks owned by `ownerId`.
    *
    * Scoped like everything else: a global total would leak how busy other
-   * connections are.
+   * callers are.
    */
   stats(ownerId: string): { total: number; byStatus: Record<TaskStatus, number> } {
     const byStatus: Record<TaskStatus, number> = {

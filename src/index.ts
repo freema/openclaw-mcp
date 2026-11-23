@@ -1,10 +1,10 @@
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
 
 import { SERVER_NAME, SERVER_VERSION } from './config/constants.js';
 import { log, logError, setDebugEnabled } from './utils/logger.js';
 import { parseArguments } from './cli.js';
 import { InstanceRegistry } from './openclaw/registry.js';
-import { createMcpServer, type ToolRegistrationDeps } from './server/tools-registration.js';
+import { createMcpServer, type ToolRegistrationDeps } from './server/mcp-server.js';
 import {
   createHttpServer,
   parseTrustProxy,
@@ -52,10 +52,14 @@ async function main() {
     log(`Instance "${instance.name}": ${instance.url}${defaultLabel}`);
   }
 
-  if (args.transport === 'sse' || args.transport === 'http') {
-    if (args.transport === 'sse') {
-      log('WARNING: --transport sse is deprecated; use --transport http instead');
-    }
+  if (args.transport === 'sse') {
+    logError(
+      'The legacy SSE transport was removed in v2.0. Use --transport http (Streamable HTTP).'
+    );
+    process.exit(1);
+  }
+
+  if (args.transport === 'http') {
     const httpConfig: HttpServerConfig = {
       port: args.port,
       host: args.host,
@@ -84,10 +88,23 @@ async function main() {
 
     await createHttpServer(httpConfig, deps);
   } else {
-    // stdio transport (default)
-    const server = createMcpServer(deps);
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
+    // stdio transport (default). serveStdio owns protocol-era negotiation:
+    // 2026-07-28 clients get the modern stateless protocol, 2025-era clients
+    // are served through the SDK's legacy path.
+    // serveStdio reports failures through onerror rather than throwing, and it
+    // uses the same channel for a failed start and for recoverable per-message
+    // errors. We can't tell them apart here, so we log rather than exit — a
+    // malformed line from the client must not kill the server.
+    const handle = serveStdio(() => createMcpServer(deps), {
+      onerror: (error) => logError('stdio transport error', error),
+    });
+
+    const shutdownStdio = () => {
+      void Promise.resolve(handle.close?.()).finally(() => process.exit(0));
+    };
+    (process as NodeJS.Process).on('SIGTERM', shutdownStdio);
+    (process as NodeJS.Process).on('SIGINT', shutdownStdio);
+
     log('OpenClaw MCP server running on stdio');
   }
 }

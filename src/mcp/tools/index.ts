@@ -1,13 +1,9 @@
-export { openclawChatTool, handleOpenclawChat } from './chat.js';
-export { openclawStatusTool, handleOpenclawStatus } from './status.js';
-export { openclawInstancesTool, handleOpenclawInstances } from './instances.js';
+export { handleOpenclawChat } from './chat.js';
+export { handleOpenclawStatus } from './status.js';
+export { handleOpenclawInstances } from './instances.js';
 
 // Async task tools
 export {
-  openclawChatAsyncTool,
-  openclawTaskStatusTool,
-  openclawTaskListTool,
-  openclawTaskCancelTool,
   handleOpenclawChatAsync,
   handleOpenclawTaskStatus,
   handleOpenclawTaskList,

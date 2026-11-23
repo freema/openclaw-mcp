@@ -35,6 +35,17 @@ jobs:
             exit 1
           fi
 
+      # A run dispatched against a release tag must publish exactly that
+      # version; anything else means the tag and package.json disagree.
+      - name: Verify the tag matches package.json
+        if: github.ref_type == 'tag'
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $VERSION" >&2
+            exit 1
+          fi
+
       - name: Install dependencies
         run: npm ci
 
@@ -43,7 +54,16 @@ jobs:
           npm run typecheck
           npm run lint
           npm run format:check
+          npm run test:run
           npm run build
 
       - name: Publish
-        run: npm publish --access public
+        run: |
+          # Prereleases go under the `beta` dist-tag so `npm i openclaw-mcp`
+          # keeps resolving to the latest stable release.
+          VERSION=$(node -p "require('./package.json').version")
+          if [[ "$VERSION" == *-* ]]; then
+            npm publish --access public --tag beta
+          else
+            npm publish --access public
+          fi

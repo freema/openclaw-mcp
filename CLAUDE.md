@@ -17,7 +17,8 @@ This is a **security-critical** MCP server. Follow these rules:
 - Set `MCP_CLIENT_ID` and `MCP_CLIENT_SECRET` env vars
 - Generate secrets with: `openssl rand -hex 32`
 - Never commit secrets to the repository
-- Uses MCP SDK's built-in OAuth server (`mcpAuthRouter` + `requireBearerAuth`)
+- The OAuth 2.1 authorization server is implemented in this repo (`src/auth/router.ts` + `src/auth/provider.ts`); MCP SDK v2 only provides the resource-server side (`requireBearerAuth`)
+- Async tasks are owned by the authenticated OAuth client (`client:<clientId>`); stdio and HTTP with auth disabled use one owner per process. Never add a task read/write path that skips the owner check
 
 ### Input Validation
 - All MCP tool inputs MUST be validated before processing
@@ -43,7 +44,7 @@ Authentication uses a Bearer token (`OPENCLAW_GATEWAY_TOKEN`).
 
 ### Transports
 - **stdio** - For local Claude Desktop integration (default)
-- **HTTP** - For remote Claude.ai integration (Streamable HTTP primary, legacy SSE kept for backward compat; requires OAuth + HTTPS)
+- **HTTP** - For remote Claude.ai integration (stateless Streamable HTTP at `/mcp`; the legacy SSE transport was removed in 2.0; requires OAuth + HTTPS)
 
 ### Tools
 | Tool | Type | Description |
@@ -53,7 +54,7 @@ Authentication uses a Bearer token (`OPENCLAW_GATEWAY_TOKEN`).
 | openclaw_chat_async | async | Queue message, get task_id |
 | openclaw_task_status | async | Check task progress |
 | openclaw_task_list | async | List all tasks |
-| openclaw_task_cancel | async | Cancel pending task |
+| openclaw_task_cancel | async | Cancel pending or running task |
 
 ## Development
 

@@ -82,7 +82,7 @@ export async function handleMyTool(client: OpenClawClient, input: unknown) {
 ```
 
 2. Export from `src/mcp/tools/index.ts`
-3. Register in `src/server/tools-registration.ts` toolHandlers map
+3. Register it in `src/server/mcp-server.ts` with `server.registerTool(...)`: the input schema there is a zod object, and the handler goes through `wrapHandler`, which also passes the task owner
 
 ## Testing
 

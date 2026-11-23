@@ -49,7 +49,17 @@ jobs:
 
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+        run: |
+          echo "VERSION=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          # Prereleases (2.0.0-beta.1) must not move the `latest` tag that
+          # production deployments pull.
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            echo "PRERELEASE=true" >> $GITHUB_OUTPUT
+            echo "DOCKER_TAGS=ghcr.io/freema/openclaw-mcp:${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          else
+            echo "PRERELEASE=false" >> $GITHUB_OUTPUT
+            printf 'DOCKER_TAGS<<EOF\nghcr.io/freema/openclaw-mcp:latest\nghcr.io/freema/openclaw-mcp:%s\nEOF\n' "${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
@@ -57,9 +67,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/freema/openclaw-mcp:latest
-            ghcr.io/freema/openclaw-mcp:${{ steps.version.outputs.VERSION }}
+          tags: ${{ steps.version.outputs.DOCKER_TAGS }}
           build-args: |
             VERSION=${{ steps.version.outputs.VERSION }}
           cache-from: type=gha
@@ -70,6 +78,9 @@ jobs:
         with:
           files: openclaw-mcp-${{ github.ref_name }}.tar.gz
           generate_release_notes: true
+          prerelease: ${{ steps.version.outputs.PRERELEASE == 'true' }}
+          # A prerelease must never become the repository's "Latest" release.
+          make_latest: ${{ steps.version.outputs.PRERELEASE == 'true' && 'false' || 'true' }}
           body: |
             ## Docker image
 
@@ -81,12 +92,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # --ref is required: without it the dispatch runs against the default
+      # branch, which publishes whatever version main happens to be on rather
+      # than the tag being released. (This only ever worked because releases
+      # were tagged from main, so the two versions coincided.)
+      # The release event itself cannot be relied on here — events raised with
+      # GITHUB_TOKEN do not trigger further workflow runs.
       - name: Trigger npm publish
-        run: gh workflow run publish.yml
+        run: gh workflow run publish.yml --ref "${GITHUB_REF_NAME}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # The registry lists a single current version per server, so a
+      # prerelease must not replace the stable entry.
       - name: Trigger MCP Registry publish
-        run: gh workflow run publish-mcp-registry.yml
+        if: steps.version.outputs.PRERELEASE != 'true'
+        run: gh workflow run publish-mcp-registry.yml --ref "${GITHUB_REF_NAME}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

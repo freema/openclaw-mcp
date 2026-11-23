@@ -11,8 +11,9 @@ All configuration can be done via environment variables. Copy `.env.example` to 
 | `OPENCLAW_URL`           | OpenClaw gateway URL                    | `http://127.0.0.1:18789` |
 | `OPENCLAW_GATEWAY_TOKEN` | Bearer token for gateway authentication | (none)                   |
 | `OPENCLAW_AGENT_ID`      | Named agent to route requests to        | (none)                   |
-| `OPENCLAW_TIMEOUT_MS`    | Request timeout in milliseconds         | `120000` (2 min)         |
+| `OPENCLAW_TIMEOUT_MS`    | Request timeout in milliseconds. For async (streamed) tasks this is an **idle** timeout — it resets on every received chunk, so long-running gateway work is only aborted when the stream goes silent. | `120000` (2 min)         |
 | `OPENCLAW_MODEL`         | Model name for chat completions         | `openclaw`               |
+| `OPENCLAW_TASK_CONCURRENCY` | How many async tasks run in parallel (1–20) | `3`                  |
 
 `OPENCLAW_AGENT_ID` is sent as the `x-openclaw-agent-id` header. When unset, the gateway uses its default agent.
 
@@ -113,15 +114,15 @@ services:
 
 | Variable      | Description                                                       | Default                  |
 | ------------- | ----------------------------------------------------------------- | ------------------------ |
-| `PORT`        | HTTP server port                                                  | `3000`                   |
-| `HOST`        | HTTP server host                                                  | `0.0.0.0`                |
-| `ALLOWED_HOSTS` | Extra hostnames accepted by DNS-rebinding protection            | (unset)                  |
-| `DEBUG`       | Enable debug logging                                              | `false`                  |
-| `TRUST_PROXY` | Express `trust proxy` setting (required behind a reverse proxy)   | (unset — trust nothing)  |
+| `PORT`          | HTTP server port                                                  | `3000`                   |
+| `HOST`          | HTTP server host                                                  | `0.0.0.0`                |
+| `ALLOWED_HOSTS` | Extra hostnames accepted by DNS-rebinding protection              | (unset)                  |
+| `DEBUG`         | Enable debug logging                                              | `false`                  |
+| `TRUST_PROXY`   | Express `trust proxy` setting (required behind a reverse proxy)   | (unset — trust nothing)  |
 
 **Request body limit:**
 
-Request bodies on `POST /mcp` and the legacy `POST /messages` are limited to 4 MiB (4,194,304 bytes) and are only read after the bearer token has been verified; a larger body is answered with `413` and a JSON-RPC error. The limit is fixed: it comfortably fits the largest message the tools accept (100,000 characters) and matches the cap the MCP SDK applies itself. JSON-RPC batches are limited to 100 messages by the SDK. If a reverse proxy in front has a smaller limit (nginx: `client_max_body_size`, 1 MB by default), that one applies first.
+Request bodies on `POST /mcp` are limited to 4 MiB (4,194,304 bytes) and are only read after the bearer token has been verified; a larger body is answered with `413` and a JSON-RPC error. The limit is fixed: it comfortably fits the largest message the tools accept (100,000 characters) and matches the cap the MCP SDK applies itself. JSON-RPC batches are limited to 100 messages by the SDK. The OAuth endpoints (`/token`, `/revoke`, `/register`) accept at most 100 kB; no other route reads a request body. Malformed or oversized bodies are answered with a short JSON error, never a stack trace. If a reverse proxy in front has a smaller limit (nginx: `client_max_body_size`, 1 MB by default), that one applies first.
 
 **`TRUST_PROXY` values:**
 
@@ -129,17 +130,17 @@ Request bodies on `POST /mcp` and the legacy `POST /messages` are limited to 4 M
 | -------------- | ------------------------------------------------------------------------------ |
 | (unset)        | Express default — do not trust any proxy                                       |
 | `1`            | Trust one hop — typical when there is a single reverse proxy in front          |
-| `true`         | Trust every proxy — only safe on a fully private network                       |
+| `true`         | Trust every proxy. Refused at startup while OAuth is on: the client-controlled `X-Forwarded-For` entry would become the rate-limit key |
 | `loopback`     | Trust `127.0.0.1` and `::1`                                                    |
 | `10.0.0.0/8`   | Trust a specific IP or CIDR range                                              |
 
-When `TRUST_PROXY` is unset and a reverse proxy injects an `X-Forwarded-For` header, the MCP SDK's `/token` handler crashes with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` and OAuth fails. Set this whenever the server is behind Caddy, nginx, Traefik, Cloudflare Tunnel, ngrok, or any other proxy.
+When `TRUST_PROXY` is unset and a reverse proxy injects an `X-Forwarded-For` header, the rate limiter on the OAuth endpoints rejects the request with `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` and OAuth fails. Set this whenever the server is behind Caddy, nginx, Traefik, Cloudflare Tunnel, ngrok, or any other proxy.
 
 **`ALLOWED_HOSTS`:**
 
-When the server binds to a loopback address (`127.0.0.1`, `localhost`, `::1`), DNS-rebinding protection rejects any request whose `Host` header is not loopback with `403 Invalid Host`. That breaks the bare-metal pattern of a loopback bind fronted by a reverse proxy that preserves the public `Host` header (Tailscale Serve, nginx with `proxy_set_header Host $host`) — and the alternative, binding to `0.0.0.0`, would expose the port on every interface.
+When the server binds to a loopback address (`127.0.0.1`, `localhost`, `::1`), DNS-rebinding protection rejects any request whose `Host` or `Origin` header is not loopback with `403 Invalid Host`. That breaks the bare-metal pattern of a loopback bind fronted by a reverse proxy that preserves the public `Host` header (Tailscale Serve, nginx with `proxy_set_header Host $host`) — the sensible alternative, binding to `0.0.0.0`, would expose the port on every interface.
 
-Set `ALLOWED_HOSTS` to a comma-separated list of extra hostnames to accept (hostnames only — no scheme or port, IPv6 in brackets, case-insensitive). The loopback set stays accepted and protection stays enabled; on a non-loopback bind, setting `ALLOWED_HOSTS` turns Host validation on where it would otherwise be off.
+Set `ALLOWED_HOSTS` to a comma-separated list of extra hostnames to accept (hostnames only — no scheme or port, IPv6 in brackets, case-insensitive). The loopback set stays accepted and protection stays enabled; on a non-loopback bind, setting `ALLOWED_HOSTS` turns Host/Origin validation on where it would otherwise be off.
 
 ```bash
 HOST=127.0.0.1 ALLOWED_HOSTS=machine.tail-net.ts.net openclaw-mcp --transport http
@@ -168,11 +169,11 @@ directly.
 
 ### Authentication (OAuth 2.1)
 
-The server uses the MCP SDK's built-in OAuth 2.1 server with authorization code + PKCE flow. This is what Claude.ai requires for custom MCP connectors.
+The server ships its own OAuth 2.1 authorization server (authorization code + PKCE); MCP SDK v2 only provides the resource-server half. This is what Claude.ai requires for custom MCP connectors.
 
-OAuth is **mandatory** for the HTTP transport since 1.8.0: without `MCP_CLIENT_ID` and `MCP_CLIENT_SECRET` the server refuses to start. `AUTH_ENABLED=true` is still accepted but no longer needed; `AUTH_ENABLED=false` refuses to start. The only way to run without authentication is `MCP_DANGEROUSLY_DISABLE_AUTH=true` (`--dangerously-disable-auth`), e.g. when a proxy in front already authenticates every request. stdio is unaffected.
+OAuth is **mandatory** for the HTTP transport (since 1.8.0, and on the 2.0 line since 2.0.0-beta.2): without `MCP_CLIENT_ID` and `MCP_CLIENT_SECRET` the server refuses to start. `AUTH_ENABLED=true` is still accepted but no longer needed; `AUTH_ENABLED=false` refuses to start. The only way to run without authentication is `MCP_DANGEROUSLY_DISABLE_AUTH=true` (`--dangerously-disable-auth`), e.g. when a proxy in front already authenticates every request. stdio is unaffected.
 
-**Async task ownership:** tasks created with `openclaw_chat_async` belong to the authenticated OAuth client, so a client that opens a new MCP session between tool calls can still poll them. Each dynamically registered client is a separate owner. Without auth (stdio, or `MCP_DANGEROUSLY_DISABLE_AUTH`) tasks are scoped to the MCP connection.
+**Async task ownership:** tasks created with `openclaw_chat_async` belong to the authenticated OAuth client. The HTTP transport is stateless — every request stands on its own — so this is what lets a client poll, list and cancel its tasks across requests, while another client's `task_id` reads as "not found". Each dynamically registered client is a separate owner. Without auth (stdio, or `MCP_DANGEROUSLY_DISABLE_AUTH`) there is no caller identity, and all tasks of the process share a single owner: with auth disabled, everyone who can reach the port sees everyone's tasks.
 
 | Variable            | Description                                                 | Required                   |
 | ------------------- | ----------------------------------------------------------- | -------------------------- |

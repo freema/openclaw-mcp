@@ -17,9 +17,14 @@ jobs:
 
       - name: Sync server.json version with release tag
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          if [ -z "$VERSION" ] || [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
-            VERSION=$(node -p "require('./package.json').version")
+          # Release tags have no `v` prefix, and a branch may be called `v2`,
+          # so the version always comes from package.json.
+          VERSION=$(node -p "require('./package.json').version")
+          # The registry lists one current version per server. A prerelease
+          # must never replace the stable entry, however this run was started.
+          if [[ "$VERSION" == *-* ]]; then
+            echo "Refusing to publish prerelease $VERSION to the MCP Registry." >&2
+            exit 1
           fi
           echo "Publishing version: $VERSION"
           node -e "
